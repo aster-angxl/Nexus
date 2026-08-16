@@ -1,6 +1,17 @@
+```js
 require('dotenv').config();
 
 const http = require('http');
+
+const {
+  Client,
+  GatewayIntentBits,
+} = require('discord.js');
+
+
+// ==============================
+// Serveur HTTP pour Render
+// ==============================
 
 const PORT = process.env.PORT || 3000;
 
@@ -11,10 +22,10 @@ http.createServer((req, res) => {
   console.log(`Serveur HTTP actif sur le port ${PORT}`);
 });
 
-const {
-  Client,
-  GatewayIntentBits,
-} = require('discord.js');
+
+// ==============================
+// Client Discord
+// ==============================
 
 const client = new Client({
   intents: [
@@ -25,19 +36,32 @@ const client = new Client({
   ],
 });
 
+
+// ==============================
+// Connexion Discord
+// ==============================
+
 client.once('ready', () => {
   console.log(`Nexus est connecté en tant que ${client.user.tag}`);
+
+  // Présence Discord
+  client.user.setPresence({
+    status: 'online',
+    activities: [
+      {
+        name: 'la communauté',
+        type: 0,
+      },
+    ],
+  });
+
+  console.log('Présence Discord configurée');
 });
 
-client.user.setPresence({
-  status: 'online',
-  activities: [
-    {
-      name: 'la communauté',
-      type: 0
-    }
-  ]
-});
+
+// ==============================
+// Gestion des erreurs
+// ==============================
 
 client.on('error', (error) => {
   console.error('Erreur Discord :', error);
@@ -50,6 +74,11 @@ client.on('warn', (message) => {
 client.on('debug', (message) => {
   console.log('[DEBUG]', message);
 });
+
+
+// ==============================
+// Gestion de la connexion
+// ==============================
 
 client.on('shardReady', (id) => {
   console.log('Shard prêt :', id);
@@ -64,11 +93,40 @@ client.on('shardReconnecting', (id) => {
 });
 
 client.on('shardResume', (id, replayedEvents) => {
-  console.log('Shard reconnecté :', id, 'Événements rejoués :', replayedEvents);
+  console.log(
+    'Shard reconnecté :',
+    id,
+    'Événements rejoués :',
+    replayedEvents
+  );
 });
 
-client.login(process.env.DISCORD_TOKEN);
+
+// ==============================
+// Heartbeat de diagnostic
+// ==============================
 
 setInterval(() => {
   console.log('Nexus est toujours actif');
 }, 30000);
+
+
+// ==============================
+// Connexion du bot
+// ==============================
+
+console.log(
+  'Token présent :',
+  !!process.env.DISCORD_TOKEN
+);
+
+console.log('Avant login');
+
+client.login(process.env.DISCORD_TOKEN)
+  .then(() => {
+    console.log('Login envoyé à Discord');
+  })
+  .catch((error) => {
+    console.error('Erreur login :', error);
+  });
+```

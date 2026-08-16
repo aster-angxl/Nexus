@@ -15,10 +15,18 @@ const {
 const PORT = process.env.PORT || 3000;
 
 const server = http.createServer(function (req, res) {
+  if (req.url === '/twitch/callback') {
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8'
+    });
+
+    res.end('<h1>Connexion Twitch réussie !</h1><p>Tu peux fermer cette page.</p>');
+    return;
+  }
+
   res.writeHead(200);
   res.end('Nexus is online');
 });
-
 server.listen(PORT, function () {
   console.log('Serveur HTTP actif sur le port ' + PORT);
 });

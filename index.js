@@ -33,5 +33,25 @@ client.on('error', (error) => {
   console.error('Erreur Discord :', error);
 });
 
+client.on('warn', (message) => {
+  console.warn('[WARN]', message);
+});
+
+client.on('debug', (message) => {
+  console.log('[DEBUG]', message);
+});
+
+client.on('shardReady', (id) => {
+  console.log('Shard prêt :', id);
+});
+
+client.on('shardDisconnect', (event, id) => {
+  console.log('Shard déconnecté :', id, event);
+});
+
+client.on('shardReconnecting', (id) => {
+  console.log('Shard en reconnexion :', id);
+});
+
 client.login(process.env.DISCORD_TOKEN);
 

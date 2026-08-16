@@ -29,6 +29,16 @@ client.once('ready', () => {
   console.log(`Nexus est connecté en tant que ${client.user.tag}`);
 });
 
+client.user.setPresence({
+  status: 'online',
+  activities: [
+    {
+      name: 'la communauté',
+      type: 0
+    }
+  ]
+});
+
 client.on('error', (error) => {
   console.error('Erreur Discord :', error);
 });

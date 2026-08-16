@@ -53,5 +53,9 @@ client.on('shardReconnecting', (id) => {
   console.log('Shard en reconnexion :', id);
 });
 
+client.on('shardResume', (id, replayedEvents) => {
+  console.log('Shard reconnecté :', id, 'Événements rejoués :', replayedEvents);
+});
+
 client.login(process.env.DISCORD_TOKEN);
 

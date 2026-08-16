@@ -59,3 +59,6 @@ client.on('shardResume', (id, replayedEvents) => {
 
 client.login(process.env.DISCORD_TOKEN);
 
+setInterval(() => {
+  console.log('Nexus est toujours actif');
+}, 30000);

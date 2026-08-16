@@ -1,4 +1,3 @@
-```js
 require('dotenv').config();
 
 const http = require('http');
@@ -130,4 +129,3 @@ client.login(process.env.DISCORD_TOKEN)
   .catch(function (error) {
     console.error('Erreur login :', error);
   });
-```

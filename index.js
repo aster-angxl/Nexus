@@ -1,3 +1,4 @@
+```js
 require('dotenv').config();
 
 const http = require('http');
@@ -43,7 +44,6 @@ const client = new Client({
 client.once('ready', () => {
   console.log(`Nexus est connecté en tant que ${client.user.tag}`);
 
-  // Présence Discord
   client.user.setPresence({
     status: 'online',
     activities: [
@@ -114,11 +114,7 @@ setInterval(() => {
 // Connexion du bot
 // ==============================
 
-console.log(
-  'Token présent :',
-  !!process.env.DISCORD_TOKEN
-);
-
+console.log('Token présent :', !!process.env.DISCORD_TOKEN);
 console.log('Avant login');
 
 client.login(process.env.DISCORD_TOKEN)

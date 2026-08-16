@@ -15,14 +15,15 @@ const {
 
 const PORT = process.env.PORT || 3000;
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(function (req, res) {
   res.writeHead(200);
   res.end('Nexus is online');
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, function () {
   console.log('Serveur HTTP actif sur le port ' + PORT);
 });
+
 
 // ==============================
 // Client Discord
@@ -42,8 +43,8 @@ const client = new Client({
 // Connexion Discord
 // ==============================
 
-client.once('ready', () => {
-  console.log(`Nexus est connecté en tant que ${client.user.tag}`);
+client.once('ready', function () {
+  console.log('Nexus est connecté en tant que ' + client.user.tag);
 
   client.user.setPresence({
     status: 'online',
@@ -60,39 +61,39 @@ client.once('ready', () => {
 
 
 // ==============================
-// Gestion des erreurs
+// Erreurs
 // ==============================
 
-client.on('error', (error) => {
+client.on('error', function (error) {
   console.error('Erreur Discord :', error);
 });
 
-client.on('warn', (message) => {
+client.on('warn', function (message) {
   console.warn('[WARN]', message);
 });
 
-client.on('debug', (message) => {
+client.on('debug', function (message) {
   console.log('[DEBUG]', message);
 });
 
 
 // ==============================
-// Gestion de la connexion
+// Connexion Gateway
 // ==============================
 
-client.on('shardReady', (id) => {
+client.on('shardReady', function (id) {
   console.log('Shard prêt :', id);
 });
 
-client.on('shardDisconnect', (event, id) => {
+client.on('shardDisconnect', function (event, id) {
   console.log('Shard déconnecté :', id, event);
 });
 
-client.on('shardReconnecting', (id) => {
+client.on('shardReconnecting', function (id) {
   console.log('Shard en reconnexion :', id);
 });
 
-client.on('shardResume', (id, replayedEvents) => {
+client.on('shardResume', function (id, replayedEvents) {
   console.log(
     'Shard reconnecté :',
     id,
@@ -103,10 +104,10 @@ client.on('shardResume', (id, replayedEvents) => {
 
 
 // ==============================
-// Heartbeat de diagnostic
+// Diagnostic
 // ==============================
 
-setInterval(() => {
+setInterval(function () {
   console.log('Nexus est toujours actif');
 }, 30000);
 
@@ -115,14 +116,18 @@ setInterval(() => {
 // Connexion du bot
 // ==============================
 
-console.log('Token présent :', !!process.env.DISCORD_TOKEN);
+console.log(
+  'Token présent :',
+  !!process.env.DISCORD_TOKEN
+);
+
 console.log('Avant login');
 
 client.login(process.env.DISCORD_TOKEN)
-  .then(() => {
+  .then(function () {
     console.log('Login envoyé à Discord');
   })
-  .catch((error) => {
+  .catch(function (error) {
     console.error('Erreur login :', error);
   });
 ```

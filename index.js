@@ -263,62 +263,6 @@ const server = http.createServer(
       return;
     }
 
-
-    // ====================================
-    // ROUTE DE CONFIGURATION TEMPORAIRE
-    // ====================================
-
-    if (
-      url.pathname ===
-      '/twitch/setup'
-    ) {
-
-      const key =
-        url.searchParams.get('key');
-
-      if (key !== TWITCH_SETUP_KEY) {
-
-        res.writeHead(403, {
-          'Content-Type':
-            'text/plain; charset=utf-8'
-        });
-
-        res.end('Forbidden');
-
-        return;
-      }
-
-
-      const refreshToken =
-        process.env.TWITCH_REFRESH_TOKEN;
-
-
-      if (!refreshToken) {
-
-        res.writeHead(404, {
-          'Content-Type':
-            'text/plain; charset=utf-8'
-        });
-
-        res.end(
-          'Aucun refresh token disponible.'
-        );
-
-        return;
-      }
-
-
-      res.writeHead(200, {
-        'Content-Type':
-          'text/plain; charset=utf-8'
-      });
-
-      res.end(refreshToken);
-
-      return;
-    }
-
-
     // ====================================
     // ROUTE INEXISTANTE
     // ====================================

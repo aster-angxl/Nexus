@@ -350,7 +350,65 @@ server.listen(
   }
 );
 
-refreshTwitchToken();
+refreshTwitchToken()
+  .then(function () {
+    return getTwitchUserId('aster_angxl');
+  })
+  .then(function (userId) {
+    console.log(
+      'ID Twitch de aster_angxl :',
+      userId
+    );
+  });
+
+async function getTwitchUserId(username) {
+  const accessToken = process.env.TWITCH_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    console.error('Access Token Twitch absent.');
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`,
+      {
+        headers: {
+          'Client-ID': TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${accessToken}`
+        }
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.data || !data.data.length) {
+      console.error(
+        'Impossible de trouver le compte Twitch :',
+        data.message || 'Utilisateur introuvable'
+      );
+
+      return null;
+    }
+
+    const user = data.data[0];
+
+    console.log(
+      'Compte Twitch trouvé :',
+      user.login
+    );
+
+    return user.id;
+
+  } catch (error) {
+    console.error(
+      'Erreur récupération utilisateur Twitch :',
+      error.message
+    );
+
+    return null;
+  }
+}
 
 // ========================================
 // CLIENT DISCORD

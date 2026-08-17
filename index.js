@@ -23,6 +23,11 @@ const TWITCH_CLIENT_SECRET =
 const TWITCH_REDIRECT_URI =
   'https://nexus-bpsk.onrender.com/twitch/callback';
 
+// Code temporaire pour récupérer le refresh token.
+// À SUPPRIMER après configuration de Render.
+const TWITCH_SETUP_KEY =
+  'nexus-twitch-setup-2026';
+
 
 // ========================================
 // SERVEUR HTTP
@@ -75,12 +80,6 @@ const server = http.createServer(
         );
 
 
-      res.writeHead(200, {
-        'Content-Type':
-          'text/html; charset=utf-8'
-      });
-
-
       // ----------------------------------
       // TWITCH A REFUSÉ
       // ----------------------------------
@@ -92,6 +91,11 @@ const server = http.createServer(
           error,
           errorDescription || ''
         );
+
+        res.writeHead(200, {
+          'Content-Type':
+            'text/html; charset=utf-8'
+        });
 
         res.end(
           '<h1>Autorisation Twitch refusée</h1>' +
@@ -108,9 +112,10 @@ const server = http.createServer(
 
       if (!code) {
 
-        console.error(
-          'Aucun code OAuth Twitch reçu.'
-        );
+        res.writeHead(400, {
+          'Content-Type':
+            'text/html; charset=utf-8'
+        });
 
         res.end(
           '<h1>Erreur OAuth Twitch</h1>' +
@@ -127,7 +132,7 @@ const server = http.createServer(
 
 
       // ----------------------------------
-      // ÉCHANGE CODE → ACCESS TOKEN
+      // ÉCHANGE CODE → TOKEN
       // ----------------------------------
 
       try {
@@ -179,6 +184,11 @@ const server = http.createServer(
             tokenData
           );
 
+          res.writeHead(500, {
+            'Content-Type':
+              'text/html; charset=utf-8'
+          });
+
           res.end(
             '<h1>Erreur Twitch</h1>' +
             '<p>Impossible de récupérer le token.</p>'
@@ -189,34 +199,40 @@ const server = http.createServer(
 
 
         // --------------------------------
-        // TOKEN OBTENU
+        // TOKENS EN MÉMOIRE
         // --------------------------------
 
-process.env.TWITCH_ACCESS_TOKEN =
-  tokenData.access_token;
+        process.env.TWITCH_ACCESS_TOKEN =
+          tokenData.access_token;
 
-process.env.TWITCH_REFRESH_TOKEN =
-  tokenData.refresh_token;
+        process.env.TWITCH_REFRESH_TOKEN =
+          tokenData.refresh_token;
 
-console.log(
-  'Access Token Twitch obtenu.'
-);
 
-console.log(
-  'Refresh Token Twitch reçu :',
-  !!tokenData.refresh_token
-);
+        console.log(
+          'Access Token Twitch obtenu.'
+        );
 
-console.log(
-  'Expiration Twitch :',
-  tokenData.expires_in,
-  'secondes'
-);
+        console.log(
+          'Refresh Token Twitch reçu :',
+          !!tokenData.refresh_token
+        );
+
+        console.log(
+          'Expiration Twitch :',
+          tokenData.expires_in,
+          'secondes'
+        );
 
 
         // --------------------------------
-        // PAGE DE SUCCÈS
+        // SUCCÈS
         // --------------------------------
+
+        res.writeHead(200, {
+          'Content-Type':
+            'text/html; charset=utf-8'
+        });
 
         res.end(
           '<h1>Connexion Twitch réussie !</h1>' +
@@ -232,21 +248,79 @@ console.log(
           error
         );
 
+        res.writeHead(500, {
+          'Content-Type':
+            'text/html; charset=utf-8'
+        });
 
         res.end(
           '<h1>Erreur</h1>' +
-          '<p>Une erreur est survenue pendant la connexion Twitch.</p>'
+          '<p>Une erreur est survenue.</p>'
         );
 
       }
-
 
       return;
     }
 
 
     // ====================================
-    // AUTRES ROUTES
+    // ROUTE DE CONFIGURATION TEMPORAIRE
+    // ====================================
+
+    if (
+      url.pathname ===
+      '/twitch/setup'
+    ) {
+
+      const key =
+        url.searchParams.get('key');
+
+      if (key !== TWITCH_SETUP_KEY) {
+
+        res.writeHead(403, {
+          'Content-Type':
+            'text/plain; charset=utf-8'
+        });
+
+        res.end('Forbidden');
+
+        return;
+      }
+
+
+      const refreshToken =
+        process.env.TWITCH_REFRESH_TOKEN;
+
+
+      if (!refreshToken) {
+
+        res.writeHead(404, {
+          'Content-Type':
+            'text/plain; charset=utf-8'
+        });
+
+        res.end(
+          'Aucun refresh token disponible.'
+        );
+
+        return;
+      }
+
+
+      res.writeHead(200, {
+        'Content-Type':
+          'text/plain; charset=utf-8'
+      });
+
+      res.end(refreshToken);
+
+      return;
+    }
+
+
+    // ====================================
+    // ROUTE INEXISTANTE
     // ====================================
 
     res.writeHead(404, {
@@ -377,9 +451,6 @@ client.on(
   'debug',
   function (message) {
 
-    // Évite d'afficher des informations
-    // sensibles dans les logs.
-
     console.log(
       '[DEBUG]',
       message
@@ -475,6 +546,11 @@ console.log(
   !!process.env.TWITCH_ACCESS_TOKEN
 );
 
+console.log(
+  'Twitch Refresh Token présent :',
+  !!process.env.TWITCH_REFRESH_TOKEN
+);
+
 
 // ========================================
 // CONNEXION DISCORD
@@ -512,7 +588,7 @@ client.login(
 
 
 // ========================================
-// HEARTBEAT NEXUS
+// HEARTBEAT
 // ========================================
 
 setInterval(

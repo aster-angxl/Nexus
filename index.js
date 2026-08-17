@@ -1,4 +1,3 @@
-```js
 require('dotenv').config();
 
 const http = require('http');
@@ -1477,4 +1476,3 @@ setInterval(
   },
   30000
 );
-```

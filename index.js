@@ -1912,70 +1912,152 @@ return;
       }
 
 
-      // ==================================
-      // VOTE CONTRE
-      // ==================================
+// ==================================
+// VOTE CONTRE
+// ==================================
 
-      if (
-        interaction.isButton() &&
-        interaction.customId.startsWith(
-          'sanction_no:'
-        )
-      ) {
+if (
+  interaction.isButton() &&
+  interaction.customId.startsWith(
+    'sanction_no:'
+  )
+) {
 
-        const requestId =
-          interaction.customId.split(
-            ':'
-          )[1];
+  const requestId =
+    interaction.customId.split(':')[1];
 
+  const request =
+    sanctionRequests.get(requestId);
 
-        const request =
-          sanctionRequests.get(
-            requestId
-          );
+  if (!request) {
 
+    await interaction.reply({
+      content:
+        '❌ Cette demande n’existe plus.',
+      ephemeral: true
+    });
 
-        if (!request) {
+    return;
+  }
 
-          await interaction.reply({
+  if (
+    request.status !== 'pending'
+  ) {
 
-            content:
-              '❌ Cette demande n’existe plus.',
+    await interaction.reply({
+      content:
+        '❌ Cette demande est déjà terminée.',
+      ephemeral: true
+    });
 
-            ephemeral:
-              true
+    return;
+  }
 
-          });
-
-          return;
-
-        }
-
-
-        if (
-          request.status !==
-          'pending'
-        ) {
-
-          await interaction.reply({
-
-            content:
-              '❌ Cette demande est déjà terminée.',
-
-            ephemeral:
-              true
-
-          });
-
-          return;
-
-        }
+  const userId =
+    interaction.user.id;
 
 
-        const userId =
-          interaction.user.id;
+  // ==================================
+  // ADMIN
+  // ==================================
+
+  if (
+    permissions.admin
+  ) {
+
+    request.status =
+      'rejected';
+
+    request.decidedBy =
+      userId;
+
+    request.decisionType =
+      'admin';
+
+    await updateSanctionMessage(
+      interaction,
+      requestId
+    );
+
+    await interaction.reply({
+      content:
+        '👑 La demande de sanction a été refusée directement par l’administrateur.',
+      ephemeral: false
+    });
+
+    return;
+  }
 
 
+  // ==================================
+  // MODO
+  // ==================================
+
+  request.votesYes.delete(
+    userId
+  );
+
+  request.votesNo.add(
+    userId
+  );
+
+
+  const noCount =
+    request.votesNo.size;
+
+
+  // ==================================
+  // 3 VOTES CONTRE = REFUS
+  // ==================================
+
+  if (
+    noCount >= 3
+  ) {
+
+    request.status =
+      'rejected';
+
+    request.decidedBy =
+      userId;
+
+    request.decisionType =
+      'moderator_vote';
+
+
+    await updateSanctionMessage(
+      interaction,
+      requestId
+    );
+
+
+    await interaction.reply({
+      content:
+        '🔴 3 modérateurs ont refusé la sanction. La demande est rejetée.',
+      ephemeral: false
+    });
+
+    return;
+  }
+
+
+  // ==================================
+  // PAS ENCORE 3 VOTES
+  // ==================================
+
+  await updateSanctionMessage(
+    interaction,
+    requestId
+  );
+
+
+  await interaction.reply({
+    content:
+      `🔴 Ton vote a été enregistré. ${noCount}/3 votes contre nécessaires.`,
+    ephemeral: true
+  });
+
+  return;
+}
         // ==================================
         // ADMIN
         // ==================================

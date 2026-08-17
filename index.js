@@ -6,7 +6,15 @@ const WebSocket = require('ws');
 const {
   Client,
   GatewayIntentBits,
-  EmbedBuilder
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
+  SlashCommandBuilder,
+  REST,
+  Routes
 } = require('discord.js');
 
 
@@ -32,12 +40,35 @@ const TWITCH_USERNAME =
 const DISCORD_CHANNEL_ID =
   '1532589426297929799';
 
+// Salon des demandes de sanctions
+const SANCTION_CHANNEL_ID =
+  '1538498193728475197';
+
+// Rôle modérateur
+const MODERATOR_ROLE_ID =
+  '1532562437746851941';
+
+// Rôle administrateur
+const ADMIN_ROLE_ID =
+  '1532566411707289724';
+
 
 // ========================================
-// PROTECTION ANTI-DOUBLON
+// PROTECTION ANTI-DOUBLON TWITCH
 // ========================================
 
 let lastAnnouncedStreamId = null;
+
+
+// ========================================
+// DEMANDES DE SANCTIONS
+// ========================================
+
+// Stockage temporaire en mémoire.
+// Plus tard, on pourra mettre une vraie base de données.
+const sanctionRequests = new Map();
+
+let nextSanctionRequestId = 1;
 
 
 // ========================================
@@ -56,6 +87,76 @@ const client = new Client({
   ]
 
 });
+
+
+// ========================================
+// OUTILS PERMISSIONS
+// ========================================
+
+function isModerator(member) {
+
+  if (!member) {
+    return false;
+  }
+
+  return (
+    member.roles.cache.has(
+      MODERATOR_ROLE_ID
+    ) ||
+    member.roles.cache.has(
+      ADMIN_ROLE_ID
+    )
+  );
+}
+
+
+function isAdmin(member) {
+
+  if (!member) {
+    return false;
+  }
+
+  return member.roles.cache.has(
+    ADMIN_ROLE_ID
+  );
+}
+
+
+// ========================================
+// SANCTIONS DISPONIBLES
+// ========================================
+
+const SANCTION_LABELS = {
+
+  warning:
+    '⚠️ Avertissement',
+
+  timeout_10m:
+    '🔇 Timeout — 10 minutes',
+
+  timeout_1h:
+    '🔇 Timeout — 1 heure',
+
+  timeout_24h:
+    '🔇 Timeout — 24 heures',
+
+  kick:
+    '👢 Kick',
+
+  ban:
+    '🔨 Ban'
+
+};
+
+
+function getSanctionLabel(type) {
+
+  return (
+    SANCTION_LABELS[type] ||
+    'Sanction inconnue'
+  );
+
+}
 
 
 // ========================================
@@ -126,6 +227,13 @@ async function refreshTwitchToken() {
 
     process.env.TWITCH_ACCESS_TOKEN =
       data.access_token;
+
+    if (data.refresh_token) {
+
+      process.env.TWITCH_REFRESH_TOKEN =
+        data.refresh_token;
+
+    }
 
     console.log(
       'Access Token Twitch renouvelé avec succès.'
@@ -377,10 +485,6 @@ async function sendTwitchLiveAnnouncement(
     }
 
 
-    // ====================================
-    // INFORMATIONS DU LIVE
-    // ====================================
-
     const gameName =
       stream.game_name ||
       'Jeu non renseigné';
@@ -394,10 +498,6 @@ async function sendTwitchLiveAnnouncement(
         ? twitchUser.profile_image_url
         : null;
 
-
-    // ====================================
-    // MESSAGE
-    // ====================================
 
     const embed =
       new EmbedBuilder()
@@ -436,10 +536,6 @@ async function sendTwitchLiveAnnouncement(
         .setTimestamp();
 
 
-    // ====================================
-    // PDP TWITCH
-    // ====================================
-
     if (profileImage) {
 
       embed.setThumbnail(
@@ -448,10 +544,6 @@ async function sendTwitchLiveAnnouncement(
 
     }
 
-
-    // ====================================
-    // ENVOI
-    // ====================================
 
     await channel.send({
 
@@ -614,10 +706,6 @@ async function handleEventSubNotification(
   }
 
 
-  // ====================================
-  // ID DU LIVE
-  // ====================================
-
   const streamId =
     event.id;
 
@@ -628,10 +716,6 @@ async function handleEventSubNotification(
     streamId
   );
 
-
-  // ====================================
-  // ANTI-DOUBLON
-  // ====================================
 
   if (
     lastAnnouncedStreamId ===
@@ -645,10 +729,6 @@ async function handleEventSubNotification(
     return;
   }
 
-
-  // ====================================
-  // RÉCUPÉRER LES INFOS
-  // ====================================
 
   const stream =
     await getTwitchStream(
@@ -671,20 +751,12 @@ async function handleEventSubNotification(
     );
 
 
-  // ====================================
-  // ENVOYER L'ALERTE
-  // ====================================
-
   const sent =
     await sendTwitchLiveAnnouncement(
       stream,
       twitchUser
     );
 
-
-  // ====================================
-  // MÉMORISER SEULEMENT SI ENVOYÉ
-  // ====================================
 
   if (sent) {
 
@@ -756,10 +828,6 @@ function connectTwitchEventSub(
         );
 
 
-        // ================================
-        // WELCOME
-        // ================================
-
         if (
           messageType ===
           'session_welcome'
@@ -781,10 +849,6 @@ function connectTwitchEventSub(
         }
 
 
-        // ================================
-        // NOTIFICATION
-        // ================================
-
         if (
           messageType ===
           'notification'
@@ -799,10 +863,6 @@ function connectTwitchEventSub(
         }
 
 
-        // ================================
-        // KEEPALIVE
-        // ================================
-
         if (
           messageType ===
           'session_keepalive'
@@ -811,10 +871,6 @@ function connectTwitchEventSub(
           return;
         }
 
-
-        // ================================
-        // RECONNECT
-        // ================================
 
         if (
           messageType ===
@@ -852,10 +908,6 @@ function connectTwitchEventSub(
           return;
         }
 
-
-        // ================================
-        // REVOCATION
-        // ================================
 
         if (
           messageType ===
@@ -912,6 +964,1270 @@ function connectTwitchEventSub(
 
 
 // ========================================
+// SANCTIONS — FORMATAGE VOTES
+// ========================================
+
+function countVotes(request) {
+
+  return {
+    pour:
+      request.votesPour.size,
+
+    contre:
+      request.votesContre.size
+  };
+
+}
+
+
+// ========================================
+// SANCTIONS — CRÉER LES BOUTONS
+// ========================================
+
+function createSanctionButtons(
+  request,
+  disabled = false
+) {
+
+  const buttons =
+    new ActionRowBuilder()
+
+      .addComponents(
+
+        new ButtonBuilder()
+
+          .setCustomId(
+            `sanction_pour_${request.id}`
+          )
+
+          .setLabel(
+            'Pour'
+          )
+
+          .setEmoji(
+            '🟢'
+          )
+
+          .setStyle(
+            ButtonStyle.Success
+          )
+
+          .setDisabled(
+            disabled
+          ),
+
+
+        new ButtonBuilder()
+
+          .setCustomId(
+            `sanction_contre_${request.id}`
+          )
+
+          .setLabel(
+            'Contre'
+          )
+
+          .setEmoji(
+            '🔴'
+          )
+
+          .setStyle(
+            ButtonStyle.Danger
+          )
+
+          .setDisabled(
+            disabled
+          ),
+
+
+        new ButtonBuilder()
+
+          .setCustomId(
+            `sanction_modifier_${request.id}`
+          )
+
+          .setLabel(
+            'Modifier la sanction'
+          )
+
+          .setEmoji(
+            '🟡'
+          )
+
+          .setStyle(
+            ButtonStyle.Secondary
+          )
+
+          .setDisabled(
+            disabled
+          )
+
+      );
+
+  return [
+    buttons
+  ];
+
+}
+
+
+// ========================================
+// SANCTIONS — EMBED
+// ========================================
+
+function createSanctionEmbed(
+  request
+) {
+
+  const votes =
+    countVotes(
+      request
+    );
+
+  const decisionText =
+    request.status === 'pending'
+      ? '🟡 En attente'
+      : request.status === 'approved'
+        ? '🟢 Sanction validée'
+        : '🔴 Demande refusée';
+
+
+  const sourceText =
+    request.source === 'automatic'
+      ? '🤖 Détection automatique'
+      : `👮 ${request.requestedByTag}`;
+
+
+  return new EmbedBuilder()
+
+    .setColor(
+      request.status === 'pending'
+        ? 0xF1C40F
+        : request.status === 'approved'
+          ? 0x2ECC71
+          : 0xE74C3C
+    )
+
+    .setTitle(
+      '🚨 Demande de sanction'
+    )
+
+    .addFields(
+
+      {
+        name:
+          '👤 Membre',
+
+        value:
+          `<@${request.targetId}>`,
+
+        inline:
+          true
+      },
+
+      {
+        name:
+          '⚠️ Sanction proposée',
+
+        value:
+          getSanctionLabel(
+            request.sanction
+          ),
+
+        inline:
+          true
+      },
+
+      {
+        name:
+          '🔎 Source',
+
+        value:
+          sourceText,
+
+        inline:
+          true
+      },
+
+      {
+        name:
+          '📝 Raison',
+
+        value:
+          request.reason,
+
+        inline:
+          false
+      },
+
+      {
+        name:
+          '🗳️ Votes',
+
+        value:
+          `🟢 Pour : **${votes.pour}**\n` +
+          `🔴 Contre : **${votes.contre}**\n` +
+          `🎯 Objectif : **3 votes Pour**`,
+
+        inline:
+          false
+      },
+
+      {
+        name:
+          '📊 Décision',
+
+        value:
+          decisionText,
+
+        inline:
+          false
+      }
+
+    )
+
+    .setFooter({
+
+      text:
+        `Demande #${request.id}`
+
+    })
+
+    .setTimestamp();
+
+}
+
+
+// ========================================
+// SANCTIONS — METTRE À JOUR LE MESSAGE
+// ========================================
+
+async function updateSanctionMessage(
+  request,
+  disabled = false
+) {
+
+  try {
+
+    const channel =
+      await client.channels.fetch(
+        SANCTION_CHANNEL_ID
+      );
+
+    if (!channel) {
+      return;
+    }
+
+    const message =
+      await channel.messages.fetch(
+        request.messageId
+      );
+
+    await message.edit({
+
+      embeds: [
+        createSanctionEmbed(
+          request
+        )
+      ],
+
+      components:
+        createSanctionButtons(
+          request,
+          disabled
+        )
+
+    });
+
+  } catch (error) {
+
+    console.error(
+      'Erreur mise à jour demande sanction :',
+      error.message
+    );
+
+  }
+
+}
+
+
+// ========================================
+// SANCTIONS — CRÉER UNE DEMANDE
+// ========================================
+
+async function createSanctionRequest({
+
+  guild,
+  target,
+  sanction,
+  reason,
+  source,
+  requestedBy
+
+}) {
+
+  const channel =
+    await guild.channels.fetch(
+      SANCTION_CHANNEL_ID
+    );
+
+
+  if (!channel) {
+
+    throw new Error(
+      'Salon des demandes de sanctions introuvable.'
+    );
+
+  }
+
+
+  const request = {
+
+    id:
+      String(
+        nextSanctionRequestId++
+      ),
+
+    guildId:
+      guild.id,
+
+    targetId:
+      target.id,
+
+    targetTag:
+      target.user.tag,
+
+    sanction:
+      sanction,
+
+    reason:
+      reason,
+
+    source:
+      source,
+
+    requestedById:
+      requestedBy.id,
+
+    requestedByTag:
+      requestedBy.user.tag,
+
+    votesPour:
+      new Set(),
+
+    votesContre:
+      new Set(),
+
+    status:
+      'pending',
+
+    messageId:
+      null,
+
+    createdAt:
+      Date.now()
+
+  };
+
+
+  const message =
+    await channel.send({
+
+      embeds: [
+        createSanctionEmbed(
+          request
+        )
+      ],
+
+      components:
+        createSanctionButtons(
+          request
+        )
+
+    });
+
+
+  request.messageId =
+    message.id;
+
+
+  sanctionRequests.set(
+    request.id,
+    request
+  );
+
+
+  console.log(
+    'Demande de sanction créée :',
+    request.id
+  );
+
+
+  return request;
+
+}
+
+
+// ========================================
+// SANCTIONS — DÉCISION
+// ========================================
+
+async function approveSanction(
+  request,
+  interaction,
+  reason
+) {
+
+  request.status =
+    'approved';
+
+  request.decisionBy =
+    interaction.user.id;
+
+  request.decisionByTag =
+    interaction.user.tag;
+
+  request.decisionReason =
+    reason || null;
+
+  request.decidedAt =
+    Date.now();
+
+
+  await updateSanctionMessage(
+    request,
+    true
+  );
+
+
+  console.log(
+    'Demande de sanction validée :',
+    request.id
+  );
+
+}
+
+
+// ========================================
+// SANCTIONS — REFUS
+// ========================================
+
+async function rejectSanction(
+  request,
+  interaction,
+  reason
+) {
+
+  request.status =
+    'rejected';
+
+  request.decisionBy =
+    interaction.user.id;
+
+  request.decisionByTag =
+    interaction.user.tag;
+
+  request.decisionReason =
+    reason || null;
+
+  request.decidedAt =
+    Date.now();
+
+
+  await updateSanctionMessage(
+    request,
+    true
+  );
+
+
+  console.log(
+    'Demande de sanction refusée :',
+    request.id
+  );
+
+}
+
+
+// ========================================
+// SANCTIONS — INTERACTIONS
+// ========================================
+
+client.on(
+  'interactionCreate',
+  async function (
+    interaction
+  ) {
+
+    try {
+
+      // ==================================
+      // SLASH COMMAND
+      // ==================================
+
+      if (
+        interaction.isChatInputCommand()
+      ) {
+
+        if (
+          interaction.commandName !==
+          'sanction'
+        ) {
+
+          return;
+        }
+
+
+        if (
+          !interaction.guild
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Cette commande doit être utilisée sur le serveur.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        if (
+          !isModerator(
+            interaction.member
+          )
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Tu n’as pas la permission d’utiliser cette commande.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        const target =
+          interaction.options.getMember(
+            'membre'
+          );
+
+        const sanction =
+          interaction.options.getString(
+            'sanction'
+          );
+
+        const reason =
+          interaction.options.getString(
+            'raison'
+          );
+
+
+        if (!target) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Membre introuvable.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        if (
+          target.user.bot
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Tu ne peux pas créer une demande de sanction pour un bot.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        if (
+          target.id ===
+          interaction.user.id
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Tu ne peux pas créer une demande de sanction contre toi-même.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        const request =
+          await createSanctionRequest({
+
+            guild:
+              interaction.guild,
+
+            target:
+              target,
+
+            sanction:
+              sanction,
+
+            reason:
+              reason,
+
+            source:
+              'manual',
+
+            requestedBy:
+              interaction.member
+
+          });
+
+
+        await interaction.reply({
+
+          content:
+            `✅ Demande de sanction **#${request.id}** créée dans <#${SANCTION_CHANNEL_ID}>.`,
+
+          ephemeral:
+            true
+
+        });
+
+        return;
+      }
+
+
+      // ==================================
+      // BOUTONS
+      // ==================================
+
+      if (
+        interaction.isButton()
+      ) {
+
+        const parts =
+          interaction.customId.split(
+            '_'
+          );
+
+        if (
+          parts[0] !==
+          'sanction'
+        ) {
+
+          return;
+        }
+
+
+        const action =
+          parts[1];
+
+        const requestId =
+          parts.slice(2).join(
+            '_'
+          );
+
+
+        const request =
+          sanctionRequests.get(
+            requestId
+          );
+
+
+        if (!request) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Cette demande n’est plus disponible. Elle a probablement été perdue après un redémarrage du bot.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        if (
+          !isModerator(
+            interaction.member
+          )
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Seuls les modérateurs peuvent voter.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        if (
+          request.status !==
+          'pending'
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Cette demande a déjà été traitée.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        // ================================
+        // MODIFIER
+        // ================================
+
+        if (
+          action ===
+          'modifier'
+        ) {
+
+          const menu =
+            new StringSelectMenuBuilder()
+
+              .setCustomId(
+                `sanction_change_${request.id}`
+              )
+
+              .setPlaceholder(
+                'Choisir la nouvelle sanction'
+              )
+
+              .addOptions(
+
+                new StringSelectMenuOptionBuilder()
+
+                  .setLabel(
+                    'Avertissement'
+                  )
+
+                  .setDescription(
+                    'Avertissement officiel'
+                  )
+
+                  .setEmoji(
+                    '⚠️'
+                  )
+
+                  .setValue(
+                    'warning'
+                  ),
+
+                new StringSelectMenuOptionBuilder()
+
+                  .setLabel(
+                    'Timeout — 10 minutes'
+                  )
+
+                  .setEmoji(
+                    '🔇'
+                  )
+
+                  .setValue(
+                    'timeout_10m'
+                  ),
+
+                new StringSelectMenuOptionBuilder()
+
+                  .setLabel(
+                    'Timeout — 1 heure'
+                  )
+
+                  .setEmoji(
+                    '🔇'
+                  )
+
+                  .setValue(
+                    'timeout_1h'
+                  ),
+
+                new StringSelectMenuOptionBuilder()
+
+                  .setLabel(
+                    'Timeout — 24 heures'
+                  )
+
+                  .setEmoji(
+                    '🔇'
+                  )
+
+                  .setValue(
+                    'timeout_24h'
+                  ),
+
+                new StringSelectMenuOptionBuilder()
+
+                  .setLabel(
+                    'Kick'
+                  )
+
+                  .setEmoji(
+                    '👢'
+                  )
+
+                  .setValue(
+                    'kick'
+                  ),
+
+                new StringSelectMenuOptionBuilder()
+
+                  .setLabel(
+                    'Ban'
+                  )
+
+                  .setEmoji(
+                    '🔨'
+                  )
+
+                  .setValue(
+                    'ban'
+                  )
+
+              );
+
+
+          const row =
+            new ActionRowBuilder()
+              .addComponents(
+                menu
+              );
+
+
+          await interaction.reply({
+
+            content:
+              '🟡 Choisis la nouvelle sanction. Les votes actuels seront remis à zéro.',
+
+            components: [
+              row
+            ],
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        // ================================
+        // VOTE POUR
+        // ================================
+
+        if (
+          action ===
+          'pour'
+        ) {
+
+          if (
+            request.votesPour.has(
+              interaction.user.id
+            ) ||
+            request.votesContre.has(
+              interaction.user.id
+            )
+          ) {
+
+            await interaction.reply({
+
+              content:
+                '❌ Tu as déjà voté sur cette demande.',
+
+              ephemeral:
+                true
+
+            });
+
+            return;
+          }
+
+
+          // L'ADMIN tranche immédiatement
+          if (
+            isAdmin(
+              interaction.member
+            )
+          ) {
+
+            request.votesPour.add(
+              interaction.user.id
+            );
+
+            await approveSanction(
+              request,
+              interaction,
+              'Décision administrateur.'
+            );
+
+
+            await interaction.reply({
+
+              content:
+                '👑 Décision administrative : **sanction validée immédiatement**.',
+
+              ephemeral:
+                true
+
+            });
+
+            return;
+          }
+
+
+          request.votesPour.add(
+            interaction.user.id
+          );
+
+
+          const votes =
+            countVotes(
+              request
+            );
+
+
+          if (
+            votes.pour >=
+            3
+          ) {
+
+            await approveSanction(
+              request,
+              interaction,
+              '3 votes modérateurs favorables.'
+            );
+
+
+            await interaction.reply({
+
+              content:
+                '🟢 **3 votes Pour atteints.** La demande est validée.',
+
+              ephemeral:
+                true
+
+            });
+
+            return;
+          }
+
+
+          await updateSanctionMessage(
+            request
+          );
+
+
+          await interaction.reply({
+
+            content:
+              `🟢 Ton vote **Pour** est enregistré. ${votes.pour}/3 votes nécessaires.`,
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        // ================================
+        // VOTE CONTRE
+        // ================================
+
+        if (
+          action ===
+          'contre'
+        ) {
+
+          if (
+            request.votesPour.has(
+              interaction.user.id
+            ) ||
+            request.votesContre.has(
+              interaction.user.id
+            )
+          ) {
+
+            await interaction.reply({
+
+              content:
+                '❌ Tu as déjà voté sur cette demande.',
+
+              ephemeral:
+                true
+
+            });
+
+            return;
+          }
+
+
+          // L'ADMIN peut refuser immédiatement
+          if (
+            isAdmin(
+              interaction.member
+            )
+          ) {
+
+            request.votesContre.add(
+              interaction.user.id
+            );
+
+            await rejectSanction(
+              request,
+              interaction,
+              'Décision administrateur.'
+            );
+
+
+            await interaction.reply({
+
+              content:
+                '👑 Décision administrative : **demande refusée immédiatement**.',
+
+              ephemeral:
+                true
+
+            });
+
+            return;
+          }
+
+
+          request.votesContre.add(
+            interaction.user.id
+          );
+
+
+          await updateSanctionMessage(
+            request
+          );
+
+
+          await interaction.reply({
+
+            content:
+              '🔴 Ton vote **Contre** est enregistré. La demande reste en attente.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+      }
+
+
+      // ==================================
+      // MENU MODIFICATION
+      // ==================================
+
+      if (
+        interaction.isStringSelectMenu()
+      ) {
+
+        if (
+          !interaction.customId.startsWith(
+            'sanction_change_'
+          )
+        ) {
+
+          return;
+        }
+
+
+        if (
+          !isModerator(
+            interaction.member
+          )
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Seuls les modérateurs peuvent modifier une sanction.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        const requestId =
+          interaction.customId.replace(
+            'sanction_change_',
+            ''
+          );
+
+
+        const request =
+          sanctionRequests.get(
+            requestId
+          );
+
+
+        if (!request) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Demande introuvable.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        if (
+          request.status !==
+          'pending'
+        ) {
+
+          await interaction.reply({
+
+            content:
+              '❌ Cette demande a déjà été traitée.',
+
+            ephemeral:
+              true
+
+          });
+
+          return;
+        }
+
+
+        const newSanction =
+          interaction.values[0];
+
+
+        request.sanction =
+          newSanction;
+
+
+        // Modification = nouveau vote
+        request.votesPour.clear();
+        request.votesContre.clear();
+
+
+        await updateSanctionMessage(
+          request
+        );
+
+
+        await interaction.reply({
+
+          content:
+            `🟡 Sanction modifiée en **${getSanctionLabel(newSanction)}**. Les votes ont été remis à zéro.`,
+
+          ephemeral:
+            true
+
+        });
+
+
+        console.log(
+          'Sanction modifiée pour la demande :',
+          request.id,
+          '→',
+          newSanction
+        );
+
+      }
+
+    } catch (error) {
+
+      console.error(
+        'Erreur interaction sanction :',
+        error
+      );
+
+
+      if (
+        interaction.replied ||
+        interaction.deferred
+      ) {
+
+        return;
+      }
+
+
+      try {
+
+        await interaction.reply({
+
+          content:
+            '❌ Une erreur est survenue.',
+
+          ephemeral:
+            true
+
+        });
+
+      } catch {
+
+        // Rien à faire si Discord refuse la réponse.
+
+      }
+
+    }
+
+  }
+);
+
+
+// ========================================
 // SERVEUR HTTP
 // ========================================
 
@@ -928,10 +2244,6 @@ const server =
           'https://nexus-bpsk.onrender.com'
         );
 
-
-      // --------------------------------
-      // PAGE PRINCIPALE
-      // --------------------------------
 
       if (
         url.pathname === '/'
@@ -952,10 +2264,6 @@ const server =
         return;
       }
 
-
-      // --------------------------------
-      // CALLBACK TWITCH
-      // --------------------------------
 
       if (
         url.pathname ===
@@ -1164,10 +2472,6 @@ const server =
       }
 
 
-      // --------------------------------
-      // 404
-      // --------------------------------
-
       res.writeHead(
         404,
         {
@@ -1258,12 +2562,201 @@ async function initializeTwitch() {
 
 
 // ========================================
+// ENREGISTREMENT COMMANDE /sanction
+// ========================================
+
+async function registerCommands() {
+
+  if (!process.env.DISCORD_TOKEN) {
+
+    console.error(
+      'DISCORD_TOKEN absent : impossible d enregistrer les commandes.'
+    );
+
+    return;
+  }
+
+
+  const commands = [
+
+    new SlashCommandBuilder()
+
+      .setName(
+        'sanction'
+      )
+
+      .setDescription(
+        'Créer une demande de sanction'
+      )
+
+      .addUserOption(
+        option =>
+
+          option
+
+            .setName(
+              'membre'
+            )
+
+            .setDescription(
+              'Membre concerné'
+            )
+
+            .setRequired(
+              true
+            )
+      )
+
+      .addStringOption(
+        option =>
+
+          option
+
+            .setName(
+              'sanction'
+            )
+
+            .setDescription(
+              'Sanction proposée'
+            )
+
+            .setRequired(
+              true
+            )
+
+            .addChoices(
+
+              {
+                name:
+                  '⚠️ Avertissement',
+
+                value:
+                  'warning'
+              },
+
+              {
+                name:
+                  '🔇 Timeout — 10 minutes',
+
+                value:
+                  'timeout_10m'
+              },
+
+              {
+                name:
+                  '🔇 Timeout — 1 heure',
+
+                value:
+                  'timeout_1h'
+              },
+
+              {
+                name:
+                  '🔇 Timeout — 24 heures',
+
+                value:
+                  'timeout_24h'
+              },
+
+              {
+                name:
+                  '👢 Kick',
+
+                value:
+                  'kick'
+              },
+
+              {
+                name:
+                  '🔨 Ban',
+
+                value:
+                  'ban'
+              }
+
+            )
+      )
+
+      .addStringOption(
+        option =>
+
+          option
+
+            .setName(
+              'raison'
+            )
+
+            .setDescription(
+              'Raison de la demande'
+            )
+
+            .setRequired(
+              true
+            )
+
+      )
+
+      .toJSON()
+
+  ];
+
+
+  const rest =
+    new REST({
+
+      version:
+        '10'
+
+    }).setToken(
+      process.env.DISCORD_TOKEN
+    );
+
+
+  try {
+
+    console.log(
+      'Enregistrement de /sanction...'
+    );
+
+
+    await rest.put(
+
+      Routes.applicationCommands(
+        process.env.DISCORD_CLIENT_ID
+      ),
+
+      {
+        body:
+          commands
+      }
+
+    );
+
+
+    console.log(
+      '/sanction enregistrée avec succès.'
+    );
+
+
+  } catch (error) {
+
+    console.error(
+      'Erreur enregistrement commandes Discord :',
+      error
+    );
+
+  }
+
+}
+
+
+// ========================================
 // DISCORD — READY
 // ========================================
 
 client.once(
   'ready',
-  function () {
+  async function () {
 
     console.log(
       'Nexus est connecté en tant que ' +
@@ -1273,6 +2766,8 @@ client.once(
     console.log(
       'Aucun statut personnalisé configuré.'
     );
+
+    await registerCommands();
 
   }
 );
@@ -1417,6 +2912,21 @@ console.log(
 console.log(
   'Twitch Refresh Token présent :',
   !!process.env.TWITCH_REFRESH_TOKEN
+);
+
+console.log(
+  'Salon sanctions configuré :',
+  SANCTION_CHANNEL_ID
+);
+
+console.log(
+  'Rôle modérateur configuré :',
+  MODERATOR_ROLE_ID
+);
+
+console.log(
+  'Rôle admin configuré :',
+  ADMIN_ROLE_ID
 );
 
 

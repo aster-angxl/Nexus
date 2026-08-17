@@ -192,20 +192,26 @@ const server = http.createServer(
         // TOKEN OBTENU
         // --------------------------------
 
-        process.env.TWITCH_ACCESS_TOKEN =
-          tokenData.access_token;
+process.env.TWITCH_ACCESS_TOKEN =
+  tokenData.access_token;
 
+process.env.TWITCH_REFRESH_TOKEN =
+  tokenData.refresh_token;
 
-        console.log(
-          'Access Token Twitch obtenu.'
-        );
+console.log(
+  'Access Token Twitch obtenu.'
+);
 
+console.log(
+  'Refresh Token Twitch reçu :',
+  !!tokenData.refresh_token
+);
 
-        console.log(
-          'Expiration Twitch :',
-          tokenData.expires_in,
-          'secondes'
-        );
+console.log(
+  'Expiration Twitch :',
+  tokenData.expires_in,
+  'secondes'
+);
 
 
         // --------------------------------

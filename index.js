@@ -988,9 +988,9 @@ async function createSanctionRequest({
             name:
               '🗳️ Votes',
 
-            value:
-              '🟢 Pour : **0 / 3**\n' +
-              '🔴 Contre : **0**',
+          value:
+  '🟢 Pour : **0 / 3**\n' +
+  '🔴 Contre : **0 / 3**',
 
             inline:
               false
@@ -1261,9 +1261,9 @@ async function updateSanctionMessage(
           name:
             '🗳️ Votes',
 
-          value:
-            `🟢 Pour : **${yesCount} / 3**\n` +
-            `🔴 Contre : **${noCount}**`,
+       value:
+  `🟢 Pour : **${yesCount} / 3**\n` +
+  `🔴 Contre : **${noCount} / 3**`,
 
           inline:
             false
@@ -1811,41 +1811,69 @@ client.on(
         }
 
 
-        // ==================================
-        // MODO
-        // ==================================
+// ==================================
+// MODO
+// ==================================
 
-        request.votesNo.delete(
-          userId
-        );
+request.votesYes.delete(
+  userId
+);
 
-        request.votesYes.add(
-          userId
-        );
+request.votesNo.add(
+  userId
+);
 
+const noCount =
+  request.votesNo.size;
 
-        const yesCount =
-          request.votesYes.size;
+if (
+  noCount >= 3
+) {
 
+  request.status =
+    'rejected';
 
-        if (
-          yesCount >= 3
-        ) {
+  request.decidedBy =
+    userId;
 
-          request.status =
-            'approved';
+  request.decisionType =
+    'moderator_vote';
 
-          request.decidedBy =
-            userId;
+  await updateSanctionMessage(
+    interaction,
+    requestId
+  );
 
-          request.decisionType =
-            'moderator_vote';
+  await interaction.reply({
 
+    content:
+      '🔴 3 modérateurs ont refusé la sanction. La demande est rejetée.',
 
-          await updateSanctionMessage(
-            interaction,
-            requestId
-          );
+    ephemeral:
+      false
+
+  });
+
+  return;
+
+}
+
+await updateSanctionMessage(
+  interaction,
+  requestId
+);
+
+await interaction.reply({
+
+  content:
+    `🔴 Ton vote a été enregistré. ${noCount}/3 votes contre nécessaires.`,
+
+  ephemeral:
+    true
+
+});
+
+return;
 
 
           await interaction.reply({

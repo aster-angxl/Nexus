@@ -23,6 +23,62 @@ const TWITCH_CLIENT_SECRET =
 const TWITCH_REDIRECT_URI =
   'https://nexus-bpsk.onrender.com/twitch/callback';
 
+async function refreshTwitchToken() {
+  const refreshToken = process.env.TWITCH_REFRESH_TOKEN;
+
+  if (!refreshToken) {
+    console.error('Refresh Token Twitch absent.');
+    return false;
+  }
+
+  try {
+    const response = await fetch(
+      'https://id.twitch.tv/oauth2/token',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type':
+            'application/x-www-form-urlencoded'
+        },
+        body: new URLSearchParams({
+          client_id: TWITCH_CLIENT_ID,
+          client_secret: TWITCH_CLIENT_SECRET,
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken
+        })
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error(
+        'Erreur renouvellement Twitch :',
+        data.message || 'Erreur inconnue'
+      );
+
+      return false;
+    }
+
+    process.env.TWITCH_ACCESS_TOKEN =
+      data.access_token;
+
+    console.log(
+      'Access Token Twitch renouvelé avec succès.'
+    );
+
+    return true;
+
+  } catch (error) {
+    console.error(
+      'Erreur connexion Twitch :',
+      error.message
+    );
+
+    return false;
+  }
+}
+
 // Code temporaire pour récupérer le refresh token.
 // À SUPPRIMER après configuration de Render.
 const TWITCH_SETUP_KEY =
@@ -294,6 +350,7 @@ server.listen(
   }
 );
 
+refreshTwitchToken();
 
 // ========================================
 // CLIENT DISCORD

@@ -1,3 +1,4 @@
+```js
 require('dotenv').config();
 
 const http = require('http');
@@ -34,6 +35,13 @@ const DISCORD_CHANNEL_ID =
 
 
 // ========================================
+// PROTECTION ANTI-DOUBLON
+// ========================================
+
+let lastAnnouncedStreamId = null;
+
+
+// ========================================
 // CLIENT DISCORD
 // ========================================
 
@@ -42,11 +50,8 @@ const client = new Client({
   intents: [
 
     GatewayIntentBits.Guilds,
-
     GatewayIntentBits.GuildMessages,
-
     GatewayIntentBits.MessageContent,
-
     GatewayIntentBits.GuildMembers
 
   ]
@@ -123,13 +128,6 @@ async function refreshTwitchToken() {
     process.env.TWITCH_ACCESS_TOKEN =
       data.access_token;
 
-    if (data.refresh_token) {
-
-      process.env.TWITCH_REFRESH_TOKEN =
-        data.refresh_token;
-
-    }
-
     console.log(
       'Access Token Twitch renouvelé avec succès.'
     );
@@ -149,7 +147,7 @@ async function refreshTwitchToken() {
 
 
 // ========================================
-// TWITCH — RÉCUPÉRER L'ID UTILISATEUR
+// TWITCH — RÉCUPÉRER ID UTILISATEUR
 // ========================================
 
 async function getTwitchUserId(username) {
@@ -227,7 +225,7 @@ async function getTwitchUserId(username) {
 
 
 // ========================================
-// TWITCH — RÉCUPÉRER LE PROFIL
+// TWITCH — PROFIL
 // ========================================
 
 async function getTwitchUser(userId) {
@@ -236,11 +234,6 @@ async function getTwitchUser(userId) {
     process.env.TWITCH_ACCESS_TOKEN;
 
   if (!accessToken) {
-
-    console.error(
-      'Access Token Twitch absent.'
-    );
-
     return null;
   }
 
@@ -273,10 +266,6 @@ async function getTwitchUser(userId) {
       !data.data.length
     ) {
 
-      console.error(
-        'Profil Twitch introuvable.'
-      );
-
       return null;
     }
 
@@ -285,7 +274,7 @@ async function getTwitchUser(userId) {
   } catch (error) {
 
     console.error(
-      'Erreur récupération profil Twitch :',
+      'Erreur profil Twitch :',
       error.message
     );
 
@@ -295,7 +284,7 @@ async function getTwitchUser(userId) {
 
 
 // ========================================
-// TWITCH — RÉCUPÉRER LE LIVE
+// TWITCH — LIVE
 // ========================================
 
 async function getTwitchStream(userId) {
@@ -304,11 +293,6 @@ async function getTwitchStream(userId) {
     process.env.TWITCH_ACCESS_TOKEN;
 
   if (!accessToken) {
-
-    console.error(
-      'Access Token Twitch absent.'
-    );
-
     return null;
   }
 
@@ -351,10 +335,6 @@ async function getTwitchStream(userId) {
       !data.data.length
     ) {
 
-      console.error(
-        'Aucun live Twitch trouvé.'
-      );
-
       return null;
     }
 
@@ -373,7 +353,7 @@ async function getTwitchStream(userId) {
 
 
 // ========================================
-// DISCORD — ANNONCE TWITCH
+// DISCORD — ALERTE TWITCH
 // ========================================
 
 async function sendTwitchLiveAnnouncement(
@@ -397,6 +377,11 @@ async function sendTwitchLiveAnnouncement(
       return false;
     }
 
+
+    // ====================================
+    // INFORMATIONS DU LIVE
+    // ====================================
+
     const gameName =
       stream.game_name ||
       'Jeu non renseigné';
@@ -410,6 +395,11 @@ async function sendTwitchLiveAnnouncement(
         ? twitchUser.profile_image_url
         : null;
 
+
+    // ====================================
+    // MESSAGE
+    // ====================================
+
     const embed =
       new EmbedBuilder()
 
@@ -418,7 +408,7 @@ async function sendTwitchLiveAnnouncement(
         )
 
         .setTitle(
-          '🔴 C’EST PARTI !'
+          '🔴 ASTER ANGXL EST EN LIVE !'
         )
 
         .setURL(
@@ -427,13 +417,15 @@ async function sendTwitchLiveAnnouncement(
 
         .setDescription(
 
-          '**ASTER ANGXL est maintenant en live** 🟣\n\n' +
+          'Il vient de lancer un live sur **' +
+          gameName +
+          '** 🎮\n\n' +
 
-          `🎮 **Jeu : ${gameName}**\n\n` +
+          'Passe lui faire un coucou 👀\n\n' +
 
-          'La team, on se retrouve sur le live ? 👀\n' +
-
-          '**Venez nombreux lui faire un coucou !** ❤️'
+          '👉 **[Regarder le live](' +
+          twitchUrl +
+          ')**'
 
         )
 
@@ -444,6 +436,11 @@ async function sendTwitchLiveAnnouncement(
 
         .setTimestamp();
 
+
+    // ====================================
+    // PDP TWITCH
+    // ====================================
+
     if (profileImage) {
 
       embed.setThumbnail(
@@ -451,6 +448,11 @@ async function sendTwitchLiveAnnouncement(
       );
 
     }
+
+
+    // ====================================
+    // ENVOI
+    // ====================================
 
     await channel.send({
 
@@ -479,7 +481,7 @@ async function sendTwitchLiveAnnouncement(
 
 
 // ========================================
-// TWITCH EVENTSUB — SUBSCRIPTION
+// EVENTSUB — SUBSCRIPTION
 // ========================================
 
 async function createStreamOnlineSubscription(
@@ -570,10 +572,6 @@ async function createStreamOnlineSubscription(
       'Subscription EventSub créée !'
     );
 
-    console.log(
-      'Type : stream.online'
-    );
-
     return true;
 
   } catch (error) {
@@ -589,7 +587,7 @@ async function createStreamOnlineSubscription(
 
 
 // ========================================
-// EVENTSUB — TRAITER UNE NOTIFICATION
+// EVENTSUB — NOTIFICATION
 // ========================================
 
 async function handleEventSubNotification(
@@ -601,21 +599,57 @@ async function handleEventSubNotification(
     message.payload &&
     message.payload.subscription;
 
+  const event =
+    message.payload &&
+    message.payload.event;
+
+
   if (
     !subscription ||
-    subscription.type !== 'stream.online'
+    subscription.type !==
+      'stream.online' ||
+    !event
   ) {
 
     return;
   }
 
-  console.log(
-    'ASTER ANGXL EST EN LIVE !'
-  );
+
+  // ====================================
+  // ID DU LIVE
+  // ====================================
+
+  const streamId =
+    event.id;
+
 
   console.log(
-    'Événement Twitch reçu.'
+    'Nouveau live détecté.',
+    'Stream ID :',
+    streamId
   );
+
+
+  // ====================================
+  // ANTI-DOUBLON
+  // ====================================
+
+  if (
+    lastAnnouncedStreamId ===
+    streamId
+  ) {
+
+    console.log(
+      'Alerte ignorée : ce live a déjà été annoncé.'
+    );
+
+    return;
+  }
+
+
+  // ====================================
+  // RÉCUPÉRER LES INFOS
+  // ====================================
 
   const stream =
     await getTwitchStream(
@@ -631,25 +665,44 @@ async function handleEventSubNotification(
     return;
   }
 
+
   const twitchUser =
     await getTwitchUser(
       userId
     );
 
-  console.log(
-    'Jeu :',
-    stream.game_name
-  );
 
-  await sendTwitchLiveAnnouncement(
-    stream,
-    twitchUser
-  );
+  // ====================================
+  // ENVOYER L'ALERTE
+  // ====================================
+
+  const sent =
+    await sendTwitchLiveAnnouncement(
+      stream,
+      twitchUser
+    );
+
+
+  // ====================================
+  // MÉMORISER SEULEMENT SI ENVOYÉ
+  // ====================================
+
+  if (sent) {
+
+    lastAnnouncedStreamId =
+      streamId;
+
+    console.log(
+      'Live mémorisé pour éviter les doublons.'
+    );
+
+  }
+
 }
 
 
 // ========================================
-// TWITCH EVENTSUB — CONNEXION
+// EVENTSUB — CONNEXION
 // ========================================
 
 function connectTwitchEventSub(
@@ -667,6 +720,7 @@ function connectTwitchEventSub(
       websocketUrl
     );
 
+
   ws.on(
     'open',
     function () {
@@ -677,6 +731,7 @@ function connectTwitchEventSub(
 
     }
   );
+
 
   ws.on(
     'message',
@@ -695,6 +750,7 @@ function connectTwitchEventSub(
           message.metadata &&
           message.metadata.message_type;
 
+
         console.log(
           'EventSub message :',
           messageType
@@ -702,7 +758,7 @@ function connectTwitchEventSub(
 
 
         // ================================
-        // SESSION WELCOME
+        // WELCOME
         // ================================
 
         if (
@@ -715,10 +771,6 @@ function connectTwitchEventSub(
 
           console.log(
             'Session EventSub reçue.'
-          );
-
-          console.log(
-            'Session ID EventSub reçu.'
           );
 
           await createStreamOnlineSubscription(
@@ -775,11 +827,12 @@ function connectTwitchEventSub(
             message.payload.session &&
             message.payload.session.reconnect_url;
 
-          console.log(
-            'Twitch demande une reconnexion EventSub.'
-          );
 
           if (reconnectUrl) {
+
+            console.log(
+              'Reconnexion EventSub demandée par Twitch.'
+            );
 
             ws.close();
 
@@ -812,12 +865,6 @@ function connectTwitchEventSub(
 
           console.error(
             'Subscription EventSub révoquée.'
-          );
-
-          console.error(
-            'Détails :',
-            message.payload &&
-            message.payload.subscription
           );
 
           return;
@@ -859,6 +906,7 @@ function connectTwitchEventSub(
 
     }
   );
+
 
   return ws;
 }
@@ -931,10 +979,6 @@ const server =
           );
 
 
-        // ================================
-        // REFUS
-        // ================================
-
         if (error) {
 
           console.error(
@@ -960,10 +1004,6 @@ const server =
         }
 
 
-        // ================================
-        // CODE ABSENT
-        // ================================
-
         if (!code) {
 
           res.writeHead(
@@ -982,15 +1022,6 @@ const server =
           return;
         }
 
-
-        console.log(
-          'Code OAuth Twitch reçu.'
-        );
-
-
-        // ================================
-        // ÉCHANGE CODE → TOKENS
-        // ================================
 
         try {
 
@@ -1031,6 +1062,7 @@ const server =
               }
             );
 
+
           const tokenData =
             await tokenResponse.json();
 
@@ -1070,6 +1102,10 @@ const server =
             process.env.TWITCH_REFRESH_TOKEN =
               tokenData.refresh_token;
 
+            console.log(
+              'Nouveau Refresh Token Twitch reçu.'
+            );
+
           }
 
 
@@ -1077,10 +1113,6 @@ const server =
             'Access Token Twitch obtenu.'
           );
 
-          console.log(
-            'Refresh Token Twitch reçu :',
-            !!tokenData.refresh_token
-          );
 
           console.log(
             'Expiration Twitch :',
@@ -1097,6 +1129,7 @@ const server =
             }
           );
 
+
           res.end(
             '<h1>Connexion Twitch réussie !</h1>' +
             '<p>Nexus a obtenu son accès Twitch.</p>' +
@@ -1111,6 +1144,7 @@ const server =
             error.message
           );
 
+
           res.writeHead(
             500,
             {
@@ -1118,6 +1152,7 @@ const server =
                 'text/html; charset=utf-8'
             }
           );
+
 
           res.end(
             '<h1>Erreur</h1>' +
@@ -1236,13 +1271,6 @@ client.once(
       client.user.tag
     );
 
-    /*
-     * Aucun statut personnalisé.
-     *
-     * Nexus apparaîtra simplement
-     * comme "En ligne" sur Discord.
-     */
-
     console.log(
       'Aucun statut personnalisé configuré.'
     );
@@ -1282,7 +1310,7 @@ client.on(
 
 
 // ========================================
-// DEBUG DISCORD
+// DEBUG
 // ========================================
 
 client.on(
@@ -1449,3 +1477,4 @@ setInterval(
   },
   30000
 );
+```

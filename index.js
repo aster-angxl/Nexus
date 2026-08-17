@@ -2052,6 +2052,154 @@ client.on(
 );
 
 // ========================================
+// COMMANDE MANUELLE — DEMANDE DE SANCTION
+// ========================================
+
+client.on(
+  'messageCreate',
+  async function (message) {
+
+    if (message.author.bot) {
+      return;
+    }
+
+    if (!message.guild) {
+      return;
+    }
+
+    if (
+      message.content.startsWith('!sanction')
+    ) {
+
+      const member =
+        message.member;
+
+      if (!member) {
+        return;
+      }
+
+      const isModerator =
+        member.roles.cache.has(
+          MOD_ROLE_ID
+        );
+
+      const isAdmin =
+        member.roles.cache.has(
+          ADMIN_ROLE_ID
+        );
+
+      if (
+        !isModerator &&
+        !isAdmin
+      ) {
+
+        await message.reply(
+          '❌ Tu n’as pas la permission d’utiliser cette commande.'
+        );
+
+        return;
+      }
+
+
+      const args =
+        message.content
+          .slice('!sanction'.length)
+          .trim()
+          .split('|')
+          .map(
+            function (value) {
+              return value.trim();
+            }
+          );
+
+
+      if (
+        args.length < 3
+      ) {
+
+        await message.reply(
+          '❌ Utilisation : `!sanction @membre | sanction proposée | raison | source`'
+        );
+
+        return;
+      }
+
+
+      const memberMention =
+        args[0];
+
+      const sanction =
+        args[1];
+
+      const reason =
+        args[2];
+
+      const source =
+        args[3] ||
+        'Non renseignée';
+
+
+      const memberMatch =
+        memberMention.match(
+          /^<@!?(\d+)>$/
+        );
+
+
+      if (!memberMatch) {
+
+        await message.reply(
+          '❌ Tu dois mentionner le membre concerné.'
+        );
+
+        return;
+      }
+
+
+      const targetMemberId =
+        memberMatch[1];
+
+
+      const requestId =
+        await createSanctionRequest({
+
+          memberId:
+            targetMemberId,
+
+          sanction:
+            sanction,
+
+          reason:
+            reason,
+
+          source:
+            source,
+
+          createdBy:
+            message.author.id
+
+        });
+
+
+      if (!requestId) {
+
+        await message.reply(
+          '❌ Impossible de créer la demande de sanction.'
+        );
+
+        return;
+      }
+
+
+      await message.reply(
+        '✅ Demande de sanction créée dans le salon de modération.'
+      );
+
+    }
+
+  }
+);
+
+// ========================================
 // SERVEUR HTTP
 // ========================================
 

@@ -115,36 +115,21 @@ let twitchChatRefreshToken =
 
 const GENERAL_INSULTS = [
   'pute',
-  'putain',
   'salope',
-  'connard',
-  'connasse',
   'encule',
   'enculé',
   'enculer',
-  'merde',
-  'bordel',
-  'batard',
-  'bâtard',
   'batarde',
   'bâtarde',
-  'fdp',
-  'ntm',
-  'nique',
-  'niquer',
-  'con',
-  'conne',
   'abruti',
   'abrutie',
   'idiot',
   'idiote',
-  'imbecile',
-  'imbécile',
-  'tg',
-  'ta gueule'
 ];
 
 const SENSITIVE_PATTERNS = [
+  'pd',
+  'negro',
   'pédé',
   'pede',
   'pédale',

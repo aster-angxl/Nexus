@@ -37,15 +37,19 @@ const TWITCH_CLIENT_SECRET =
   process.env.TWITCH_CLIENT_SECRET;
 
 const TWITCH_REDIRECT_URI =
+  process.env.TWITCH_REDIRECT_URI ||
   'https://nexus-bpsk.onrender.com/twitch/callback';
 
 const TWITCH_USERNAME =
+  process.env.TWITCH_USERNAME ||
   'aster_angxl';
 
 const STREAM_CHANNEL_ID =
+  process.env.STREAM_CHANNEL_ID ||
   '1532589426297929799';
 
 const SANCTION_CHANNEL_ID =
+  process.env.SANCTION_CHANNEL_ID ||
   '1538498193728475197';
 
 
@@ -68,15 +72,37 @@ const GENERAL_INSULTS = [
   'enculé'
 ];
 
-// Ajoute ici les mots sensibles si nécessaire.
 const SENSITIVE_PATTERNS = [];
+
+
+// ============================================================
+// ÉTAT GLOBAL
+// ============================================================
+
+let shuttingDown = false;
+
+let shutdownStarted = false;
+
+let discordReadyAt = null;
+
+let lastAnnouncedStreamId = null;
+
+let twitchUserId = null;
+
+let twitchEventSubSocket = null;
+
+let twitchEventSubSessionId = null;
+
+let twitchEventSubConnecting = false;
+
+let twitchReconnectTimer = null;
+
+let twitchReconnectAttempt = 0;
 
 
 // ============================================================
 // MÉMOIRE
 // ============================================================
-
-let lastAnnouncedStreamId = null;
 
 const detectionTracker =
   new Map();
@@ -86,23 +112,6 @@ const sanctionCooldowns =
 
 const sanctionRequests =
   new Map();
-
-
-// ============================================================
-// ÉTAT DU PROCESSUS
-// ============================================================
-
-let shuttingDown = false;
-
-let discordReadyAt = null;
-
-let lastDiscordReadyAt = null;
-
-let twitchEventSubSocket = null;
-
-let twitchEventSubConnecting = false;
-
-let twitchReconnectTimer = null;
 
 
 // ============================================================
@@ -120,15 +129,35 @@ const client = new Client({
 
 
 // ============================================================
-// OUTILS
+// OUTILS GÉNÉRAUX
 // ============================================================
+
+function sleep(ms) {
+  return new Promise(
+    resolve => setTimeout(resolve, ms)
+  );
+}
+
+
+function getDiscordStatusName(status) {
+  const entry =
+    Object.entries(Status).find(
+      ([, value]) =>
+        value === status
+    );
+
+  return entry
+    ? entry[0]
+    : `UNKNOWN(${status})`;
+}
+
 
 function normalizeText(text) {
   return String(text || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[_\-.,!?;:/\\]+/g, ' ')
+    .replace(/[_\-.,!?;:/\\()[\]{}"'`]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -183,9 +212,7 @@ function detectModeration(content) {
     }
   }
 
-  for (
-    const word of SENSITIVE_PATTERNS
-  ) {
+  for (const word of SENSITIVE_PATTERNS) {
     if (
       containsWord(
         content,
@@ -205,19 +232,18 @@ function detectModeration(content) {
 
 
 // ============================================================
-// ENREGISTRER UNE DÉTECTION
+// TRACKING DÉTECTIONS
 // ============================================================
 
 function registerDetection(
   userId,
   type
 ) {
-  const now = Date.now();
+  const now =
+    Date.now();
 
   let data =
-    detectionTracker.get(
-      userId
-    );
+    detectionTracker.get(userId);
 
   if (!data) {
     data = {
@@ -254,6 +280,24 @@ function registerDetection(
   );
 
   return data;
+}
+
+
+// ============================================================
+// TWITCH — HEADERS
+// ============================================================
+
+function twitchHeaders() {
+  const token =
+    process.env.TWITCH_ACCESS_TOKEN;
+
+  return {
+    'Client-ID':
+      TWITCH_CLIENT_ID,
+
+    'Authorization':
+      `Bearer ${token}`
+  };
 }
 
 
@@ -320,7 +364,15 @@ async function refreshTwitchToken() {
       console.error(
         '❌ Erreur renouvellement Twitch :',
         data.message ||
-          'Erreur inconnue'
+          JSON.stringify(data)
+      );
+
+      return false;
+    }
+
+    if (!data.access_token) {
+      console.error(
+        '❌ Twitch n’a fourni aucun access token.'
       );
 
       return false;
@@ -333,20 +385,6 @@ async function refreshTwitchToken() {
       '✅ Access Token Twitch renouvelé.'
     );
 
-    /*
-     * IMPORTANT :
-     *
-     * Twitch peut fournir un nouveau
-     * refresh_token.
-     *
-     * Ici on le conserve en mémoire
-     * pour le processus actuel.
-     *
-     * Si Render redémarre le service,
-     * il faudra également mettre ce
-     * nouveau refresh token dans les
-     * variables d'environnement persistantes.
-     */
     if (data.refresh_token) {
       process.env.TWITCH_REFRESH_TOKEN =
         data.refresh_token;
@@ -356,7 +394,7 @@ async function refreshTwitchToken() {
       );
 
       console.warn(
-        '⚠️ Le nouveau Refresh Token doit être sauvegardé dans Render pour survivre à un redémarrage.'
+        '⚠️ IMPORTANT : sauvegarde le nouveau TWITCH_REFRESH_TOKEN dans Render.'
       );
     }
 
@@ -380,10 +418,9 @@ async function refreshTwitchToken() {
 async function getTwitchUserId(
   username
 ) {
-  const accessToken =
-    process.env.TWITCH_ACCESS_TOKEN;
-
-  if (!accessToken) {
+  if (
+    !process.env.TWITCH_ACCESS_TOKEN
+  ) {
     console.error(
       '❌ TWITCH_ACCESS_TOKEN absent.'
     );
@@ -396,43 +433,52 @@ async function getTwitchUserId(
       await fetch(
         `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`,
         {
-          headers: {
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`
-          }
+          headers:
+            twitchHeaders()
         }
       );
 
     const data =
       await response.json();
 
-    if (
-      !response.ok ||
-      !data.data ||
-      !data.data.length
-    ) {
+    if (!response.ok) {
       console.error(
-        '❌ Utilisateur Twitch introuvable :',
+        '❌ Erreur utilisateur Twitch :',
         data.message ||
-          'Erreur inconnue'
+          JSON.stringify(data)
       );
 
       return null;
     }
 
+    if (
+      !data.data ||
+      !data.data.length
+    ) {
+      console.error(
+        '❌ Utilisateur Twitch introuvable :',
+        username
+      );
+
+      return null;
+    }
+
+    const user =
+      data.data[0];
+
     console.log(
-      'Compte Twitch trouvé :',
-      data.data[0].login
+      `Compte Twitch trouvé : ${user.login}`
     );
 
-    return data.data[0].id;
+    console.log(
+      `ID Twitch de ${user.login}: ${user.id}`
+    );
+
+    return user.id;
 
   } catch (error) {
     console.error(
-      '❌ Erreur utilisateur Twitch :',
+      '❌ Erreur API Twitch users :',
       error.message
     );
 
@@ -448,33 +494,36 @@ async function getTwitchUserId(
 async function getTwitchUser(
   userId
 ) {
-  const accessToken =
-    process.env.TWITCH_ACCESS_TOKEN;
-
-  if (!accessToken) {
+  if (
+    !process.env.TWITCH_ACCESS_TOKEN
+  ) {
     return null;
   }
 
   try {
     const response =
       await fetch(
-        `https://api.twitch.tv/helix/users?id=${userId}`,
+        `https://api.twitch.tv/helix/users?id=${encodeURIComponent(userId)}`,
         {
-          headers: {
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`
-          }
+          headers:
+            twitchHeaders()
         }
       );
 
     const data =
       await response.json();
 
+    if (!response.ok) {
+      console.error(
+        '❌ Erreur profil Twitch :',
+        data.message ||
+          JSON.stringify(data)
+      );
+
+      return null;
+    }
+
     if (
-      !response.ok ||
       !data.data ||
       !data.data.length
     ) {
@@ -495,31 +544,25 @@ async function getTwitchUser(
 
 
 // ============================================================
-// TWITCH — LIVE
+// TWITCH — STREAM
 // ============================================================
 
 async function getTwitchStream(
   userId
 ) {
-  const accessToken =
-    process.env.TWITCH_ACCESS_TOKEN;
-
-  if (!accessToken) {
+  if (
+    !process.env.TWITCH_ACCESS_TOKEN
+  ) {
     return null;
   }
 
   try {
     const response =
       await fetch(
-        `https://api.twitch.tv/helix/streams?user_id=${userId}`,
+        `https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(userId)}`,
         {
-          headers: {
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`
-          }
+          headers:
+            twitchHeaders()
         }
       );
 
@@ -530,7 +573,7 @@ async function getTwitchStream(
       console.error(
         '❌ Erreur Twitch streams :',
         data.message ||
-          'Erreur inconnue'
+          JSON.stringify(data)
       );
 
       return null;
@@ -618,7 +661,9 @@ async function sendTwitchLiveAnnouncement(
     }
 
     await channel.send({
-      embeds: [embed]
+      embeds: [
+        embed
+      ]
     });
 
     console.log(
@@ -639,17 +684,16 @@ async function sendTwitchLiveAnnouncement(
 
 
 // ============================================================
-// TWITCH EVENTSUB — SUBSCRIPTION
+// TWITCH EVENTSUB — CRÉER SUBSCRIPTION
 // ============================================================
 
 async function createStreamOnlineSubscription(
   sessionId,
   userId
 ) {
-  const accessToken =
-    process.env.TWITCH_ACCESS_TOKEN;
-
-  if (!accessToken) {
+  if (
+    !process.env.TWITCH_ACCESS_TOKEN
+  ) {
     console.error(
       '❌ Access Token Twitch absent.'
     );
@@ -665,11 +709,7 @@ async function createStreamOnlineSubscription(
           method: 'POST',
 
           headers: {
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`,
+            ...twitchHeaders(),
 
             'Content-Type':
               'application/json'
@@ -706,7 +746,7 @@ async function createStreamOnlineSubscription(
       console.error(
         '❌ Erreur EventSub :',
         data.message ||
-          'Erreur inconnue'
+          JSON.stringify(data)
       );
 
       return false;
@@ -730,12 +770,22 @@ async function createStreamOnlineSubscription(
 
 
 // ============================================================
-// TWITCH EVENTSUB — CONNEXION
+// TWITCH EVENTSUB — RECONNEXION
 // ============================================================
 
-function scheduleTwitchReconnect(
-  userId
-) {
+function clearTwitchReconnectTimer() {
+  if (twitchReconnectTimer) {
+    clearTimeout(
+      twitchReconnectTimer
+    );
+
+    twitchReconnectTimer =
+      null;
+  }
+}
+
+
+function scheduleTwitchReconnect() {
   if (shuttingDown) {
     return;
   }
@@ -744,28 +794,98 @@ function scheduleTwitchReconnect(
     return;
   }
 
+  twitchReconnectAttempt++;
+
+  const delay =
+    Math.min(
+      5000 *
+        Math.pow(
+          2,
+          twitchReconnectAttempt - 1
+        ),
+      60000
+    );
+
+  console.warn(
+    `⏳ Reconnexion Twitch prévue dans ${Math.round(delay / 1000)}s.`
+  );
+
   twitchReconnectTimer =
     setTimeout(
-      () => {
+      async () => {
         twitchReconnectTimer =
           null;
 
-        if (!shuttingDown) {
-          connectTwitchEventSub(
-            userId
-          );
+        if (shuttingDown) {
+          return;
         }
-      },
-      5000
-    );
 
-  console.log(
-    '⏳ Reconnexion Twitch EventSub prévue dans 5 secondes.'
-  );
+        if (!twitchUserId) {
+          console.error(
+            '❌ Impossible de reconnecter Twitch : userId absent.'
+          );
+
+          return;
+        }
+
+        await connectTwitchEventSub(
+          twitchUserId
+        );
+      },
+      delay
+    );
 }
 
 
-function connectTwitchEventSub(
+// ============================================================
+// TWITCH EVENTSUB — FERMER SOCKET
+// ============================================================
+
+function closeTwitchSocket(
+  reason = 'normal'
+) {
+  const socket =
+    twitchEventSubSocket;
+
+  if (!socket) {
+    return;
+  }
+
+  console.log(
+    `🔌 Fermeture EventSub Twitch : ${reason}`
+  );
+
+  try {
+    socket.removeAllListeners(
+      'message'
+    );
+  } catch {}
+
+  try {
+    socket.close();
+  } catch {}
+
+  if (
+    twitchEventSubSocket ===
+    socket
+  ) {
+    twitchEventSubSocket =
+      null;
+  }
+
+  twitchEventSubSessionId =
+    null;
+
+  twitchEventSubConnecting =
+    false;
+}
+
+
+// ============================================================
+// TWITCH EVENTSUB — CONNEXION
+// ============================================================
+
+async function connectTwitchEventSub(
   userId,
   websocketUrl =
     'wss://eventsub.wss.twitch.tv/ws'
@@ -774,16 +894,21 @@ function connectTwitchEventSub(
     return null;
   }
 
+  if (!userId) {
+    console.error(
+      '❌ Twitch userId absent.'
+    );
+
+    return null;
+  }
+
   if (
-    twitchEventSubConnecting ||
+    twitchEventSubSocket &&
     (
-      twitchEventSubSocket &&
-      (
-        twitchEventSubSocket.readyState ===
+      twitchEventSubSocket.readyState ===
         WebSocket.OPEN ||
-        twitchEventSubSocket.readyState ===
+      twitchEventSubSocket.readyState ===
         WebSocket.CONNECTING
-      )
     )
   ) {
     console.log(
@@ -792,6 +917,8 @@ function connectTwitchEventSub(
 
     return twitchEventSubSocket;
   }
+
+  clearTwitchReconnectTimer();
 
   twitchEventSubConnecting =
     true;
@@ -829,51 +956,90 @@ function connectTwitchEventSub(
             rawMessage.toString()
           );
 
+        const metadata =
+          message.metadata ||
+          {};
+
         const messageType =
-          message.metadata &&
-          message.metadata.message_type;
+          metadata.message_type;
 
         console.log(
           'EventSub message :',
           messageType
         );
 
-        // ----------------------------------------------------
+        // ------------------------------------------------------
         // WELCOME
-        // ----------------------------------------------------
+        // ------------------------------------------------------
 
         if (
           messageType ===
           'session_welcome'
         ) {
-          const sessionId =
-            message.payload.session.id;
+          const session =
+            message.payload &&
+            message.payload.session;
+
+          if (!session) {
+            console.error(
+              '❌ Session Twitch invalide.'
+            );
+
+            return;
+          }
+
+          twitchEventSubSessionId =
+            session.id;
+
+          twitchEventSubReconnectAttemptReset();
 
           console.log(
             'Session EventSub reçue.'
           );
 
-          await createStreamOnlineSubscription(
-            sessionId,
-            userId
-          );
+          const created =
+            await createStreamOnlineSubscription(
+              session.id,
+              userId
+            );
+
+          if (!created) {
+            console.error(
+              '❌ Impossible de créer la subscription EventSub.'
+            );
+          }
 
           return;
         }
 
-        // ----------------------------------------------------
+        // ------------------------------------------------------
+        // KEEPALIVE
+        // ------------------------------------------------------
+
+        if (
+          messageType ===
+          'session_keepalive'
+        ) {
+          return;
+        }
+
+        // ------------------------------------------------------
         // NOTIFICATION
-        // ----------------------------------------------------
+        // ------------------------------------------------------
 
         if (
           messageType ===
           'notification'
         ) {
+          const payload =
+            message.payload ||
+            {};
+
           const subscription =
-            message.payload.subscription;
+            payload.subscription;
 
           const event =
-            message.payload.event;
+            payload.event;
 
           if (
             subscription &&
@@ -900,14 +1066,36 @@ function connectTwitchEventSub(
               return;
             }
 
-            const stream =
-              await getTwitchStream(
-                userId
-              );
+            /*
+             * EventSub peut notifier avant
+             * que l'API streams retourne
+             * immédiatement les informations.
+             *
+             * On essaie plusieurs fois.
+             */
+
+            let stream = null;
+
+            for (
+              let attempt = 1;
+              attempt <= 5;
+              attempt++
+            ) {
+              stream =
+                await getTwitchStream(
+                  userId
+                );
+
+              if (stream) {
+                break;
+              }
+
+              await sleep(2000);
+            }
 
             if (!stream) {
               console.error(
-                '❌ Informations du live introuvables.'
+                '❌ Informations du live introuvables après plusieurs tentatives.'
               );
 
               return;
@@ -933,9 +1121,9 @@ function connectTwitchEventSub(
           return;
         }
 
-        // ----------------------------------------------------
+        // ------------------------------------------------------
         // RECONNECT
-        // ----------------------------------------------------
+        // ------------------------------------------------------
 
         if (
           messageType ===
@@ -944,34 +1132,76 @@ function connectTwitchEventSub(
           const reconnectUrl =
             message.payload &&
             message.payload.session &&
-            message.payload.session.reconnect_url;
+            message.payload.session
+              .reconnect_url;
 
-          if (reconnectUrl) {
-            console.log(
-              '🔄 Twitch demande une reconnexion.'
+          if (!reconnectUrl) {
+            console.error(
+              '❌ Twitch a demandé une reconnexion sans URL.'
             );
 
-            /*
-             * On ferme cette socket.
-             * Twitch fournit une URL spéciale
-             * permettant de transférer la session.
-             */
-            try {
-              ws.close();
-            } catch {}
-
-            setTimeout(
-              () => {
-                if (!shuttingDown) {
-                  connectTwitchEventSub(
-                    userId,
-                    reconnectUrl
-                  );
-                }
-              },
-              1000
-            );
+            return;
           }
+
+          console.log(
+            '🔄 Twitch demande une reconnexion EventSub.'
+          );
+
+          /*
+           * Important :
+           *
+           * On ouvre la nouvelle connexion
+           * avec l'URL fournie par Twitch.
+           *
+           * On ne détruit pas immédiatement
+           * l'ancienne socket avant d'avoir
+           * donné la possibilité à la nouvelle
+           * de récupérer la session.
+           */
+
+          setTimeout(
+            async () => {
+              if (shuttingDown) {
+                return;
+              }
+
+              await connectTwitchEventSub(
+                userId,
+                reconnectUrl
+              );
+            },
+            500
+          );
+
+          return;
+        }
+
+        // ------------------------------------------------------
+        // REVOCATION
+        // ------------------------------------------------------
+
+        if (
+          messageType ===
+          'revocation'
+        ) {
+          console.error(
+            '🔴 Subscription Twitch révoquée.'
+          );
+
+          const payload =
+            message.payload ||
+            {};
+
+          console.error(
+            'Subscription :',
+            payload.subscription || null
+          );
+
+          /*
+           * Une révocation signifie souvent
+           * que le token ou les permissions
+           * doivent être vérifiés.
+           */
 
           return;
         }
@@ -1000,7 +1230,7 @@ function connectTwitchEventSub(
 
   ws.on(
     'close',
-    () => {
+    (code, reason) => {
       twitchEventSubConnecting =
         false;
 
@@ -1010,21 +1240,56 @@ function connectTwitchEventSub(
       ) {
         twitchEventSubSocket =
           null;
+
+        twitchEventSubSessionId =
+          null;
       }
 
       console.warn(
-        '🟠 Connexion Twitch EventSub fermée.'
+        `🟠 Connexion Twitch EventSub fermée. Code=${code} Reason=${reason ? reason.toString() : 'aucune'}`
       );
 
       if (!shuttingDown) {
-        scheduleTwitchReconnect(
-          userId
-        );
+        scheduleTwitchReconnect();
       }
     }
   );
 
   return ws;
+}
+
+
+function twitchEventSubReconnectAttemptReset() {
+  twitchReconnectAttempt =
+    0;
+}
+
+
+// ============================================================
+// SANCTIONS — PERMISSIONS
+// ============================================================
+
+function canModerate(
+  interaction
+) {
+  return Boolean(
+    interaction.memberPermissions &&
+    interaction.memberPermissions.has(
+      PermissionFlagsBits.ManageMessages
+    )
+  );
+}
+
+
+function isAdmin(
+  interaction
+) {
+  return Boolean(
+    interaction.memberPermissions &&
+    interaction.memberPermissions.has(
+      PermissionFlagsBits.Administrator
+    )
+  );
 }
 
 
@@ -1044,6 +1309,14 @@ async function createSanctionRequest({
     if (!guild) {
       console.error(
         '❌ Guild absente.'
+      );
+
+      return null;
+    }
+
+    if (!targetUser) {
+      console.error(
+        '❌ Target user absent.'
       );
 
       return null;
@@ -1076,7 +1349,8 @@ async function createSanctionRequest({
         targetUser.id,
 
       targetTag:
-        targetUser.tag,
+        targetUser.tag ||
+        targetUser.username,
 
       proposedSanction:
         proposedSanction,
@@ -1103,7 +1377,10 @@ async function createSanctionRequest({
         'pending',
 
       messageId:
-        null
+        null,
+
+      createdAt:
+        Date.now()
     };
 
     const sourceText =
@@ -1144,8 +1421,12 @@ async function createSanctionRequest({
           '💬 Message concerné',
 
         value:
-          detectedMessage
-            .slice(0, 1000)
+          String(
+            detectedMessage
+          ).slice(
+            0,
+            1000
+          )
       });
     }
 
@@ -1216,7 +1497,7 @@ async function createSanctionRequest({
   } catch (error) {
     console.error(
       '❌ Erreur création demande sanction :',
-      error.message
+      error
     );
 
     return null;
@@ -1225,35 +1506,7 @@ async function createSanctionRequest({
 
 
 // ============================================================
-// PERMISSIONS
-// ============================================================
-
-function canModerate(
-  interaction
-) {
-  return Boolean(
-    interaction.memberPermissions &&
-    interaction.memberPermissions.has(
-      PermissionFlagsBits.ManageMessages
-    )
-  );
-}
-
-
-function isAdmin(
-  interaction
-) {
-  return Boolean(
-    interaction.memberPermissions &&
-    interaction.memberPermissions.has(
-      PermissionFlagsBits.Administrator
-    )
-  );
-}
-
-
-// ============================================================
-// VOTE SANCTION
+// SANCTIONS — VOTE
 // ============================================================
 
 async function handleSanctionVote(
@@ -1364,7 +1617,7 @@ async function handleSanctionVote(
   }
 
   // ----------------------------------------------------------
-  // ENREGISTRER VOTE
+  // ENREGISTRER
   // ----------------------------------------------------------
 
   if (vote === 'yes') {
@@ -1420,7 +1673,7 @@ async function handleSanctionVote(
 
 
 // ============================================================
-// FINALISATION SANCTION
+// SANCTIONS — FINALISATION
 // ============================================================
 
 async function finalizeSanctionRequest(
@@ -1431,6 +1684,10 @@ async function finalizeSanctionRequest(
       await client.channels.fetch(
         SANCTION_CHANNEL_ID
       );
+
+    if (!channel) {
+      return;
+    }
 
     const message =
       await channel.messages.fetch(
@@ -1533,7 +1790,7 @@ async function finalizeSanctionRequest(
 
 
 // ============================================================
-// MODIFIER SANCTION
+// SANCTIONS — MODIFICATION
 // ============================================================
 
 async function handleModifySanction(
@@ -1583,7 +1840,7 @@ async function handleModifySanction(
 
 
 // ============================================================
-// MISE À JOUR DES VOTES
+// SANCTIONS — UPDATE VOTES
 // ============================================================
 
 async function updateSanctionMessage(
@@ -1605,19 +1862,38 @@ async function updateSanctionMessage(
         message.embeds[0]
       );
 
-    embed.spliceFields(
-      0,
-      1,
-      {
-        name:
-          '🗳️ Votes',
+    const voteFieldIndex =
+      embed.data.fields
+        ? embed.data.fields.findIndex(
+            field =>
+              field.name ===
+              '🗳️ Votes'
+          )
+        : -1;
 
-        value:
-          `🟢 Pour : **${request.yesVotes.size}**\n` +
-          `🔴 Contre : **${request.noVotes.size}**\n\n` +
-          `Validation automatique à **3 votes Pour**.`
-      }
-    );
+    const voteField = {
+      name:
+        '🗳️ Votes',
+
+      value:
+        `🟢 Pour : **${request.yesVotes.size}**\n` +
+        `🔴 Contre : **${request.noVotes.size}**\n\n` +
+        `Validation automatique à **3 votes Pour**.`
+    };
+
+    if (
+      voteFieldIndex >= 0
+    ) {
+      embed.spliceFields(
+        voteFieldIndex,
+        1,
+        voteField
+      );
+    } else {
+      embed.addFields(
+        voteField
+      );
+    }
 
     await message.edit({
       embeds: [
@@ -1635,13 +1911,12 @@ async function updateSanctionMessage(
 
 
 // ============================================================
-// INTERACTIONS DISCORD
+// DISCORD — INTERACTIONS
 // ============================================================
 
 client.on(
   'interactionCreate',
   async interaction => {
-
     try {
 
       // --------------------------------------------------------
@@ -1651,7 +1926,6 @@ client.on(
       if (
         interaction.isChatInputCommand()
       ) {
-
         if (
           interaction.commandName !==
           'sanction'
@@ -1798,11 +2072,16 @@ client.on(
       if (
         interaction.isButton()
       ) {
-
         const parts =
           interaction.customId.split(
             '_'
           );
+
+        if (
+          parts.length < 3
+        ) {
+          return;
+        }
 
         const action =
           parts[1];
@@ -1852,7 +2131,6 @@ client.on(
       }
 
     } catch (error) {
-
       console.error(
         '❌ Erreur interaction :',
         error
@@ -1878,13 +2156,12 @@ client.on(
 
 
 // ============================================================
-// AUTO-MODÉRATION
+// AUTO-MODÉRATION DISCORD
 // ============================================================
 
 client.on(
   'messageCreate',
   async message => {
-
     if (shuttingDown) {
       return;
     }
@@ -1940,13 +2217,12 @@ client.on(
     );
 
     // --------------------------------------------------------
-    // SENSIBLE
+    // CONTENU SENSIBLE
     // --------------------------------------------------------
 
     if (
       detected.sensitive
     ) {
-
       await createSanctionRequest({
         guild:
           message.guild,
@@ -1978,7 +2254,6 @@ client.on(
       generalCount >=
       GENERAL_INSULT_THRESHOLD
     ) {
-
       const now =
         Date.now();
 
@@ -1990,7 +2265,7 @@ client.on(
       if (
         lastRequest &&
         now - lastRequest <
-        SANCTION_COOLDOWN
+          SANCTION_COOLDOWN
       ) {
         return;
       }
@@ -2172,17 +2447,13 @@ async function registerCommands() {
 
 
 // ============================================================
-// ÉVÉNEMENT READY
+// DISCORD READY
 // ============================================================
 
 client.once(
   'clientReady',
   async () => {
-
     discordReadyAt =
-      Date.now();
-
-    lastDiscordReadyAt =
       Date.now();
 
     console.log(
@@ -2206,7 +2477,7 @@ client.once(
 
 
 // ============================================================
-// ÉVÉNEMENTS DISCORD
+// DISCORD ÉVÉNEMENTS
 // ============================================================
 
 client.on(
@@ -2234,13 +2505,6 @@ client.on(
 client.on(
   'debug',
   message => {
-    /*
-     * Les événements debug ne doivent PAS
-     * être utilisés pour déterminer si
-     * Discord est réellement vivant.
-     *
-     * Ils servent uniquement au diagnostic.
-     */
     console.log(
       '[DISCORD DEBUG]',
       message
@@ -2252,7 +2516,6 @@ client.on(
 client.on(
   'shardReady',
   id => {
-
     discordReadyAt =
       Date.now();
 
@@ -2267,7 +2530,6 @@ client.on(
 client.on(
   'shardDisconnect',
   (event, id) => {
-
     console.error(
       '🔴 DISCORD SHARD DÉCONNECTÉ'
     );
@@ -2299,7 +2561,6 @@ client.on(
 client.on(
   'shardReconnecting',
   id => {
-
     console.warn(
       '🟠 Discord reconnexion automatique.'
     );
@@ -2315,7 +2576,6 @@ client.on(
 client.on(
   'shardResume',
   (id, replayedEvents) => {
-
     discordReadyAt =
       Date.now();
 
@@ -2337,7 +2597,7 @@ client.on(
 
 
 // ============================================================
-// WATCHDOG DISCORD
+// WATCHDOG
 // ============================================================
 
 const WATCHDOG_INTERVAL =
@@ -2345,23 +2605,18 @@ const WATCHDOG_INTERVAL =
 
 setInterval(
   () => {
-
     if (shuttingDown) {
       return;
     }
 
     try {
-
       const status =
         client.ws.status;
 
       const statusName =
-        Object.keys(Status).find(
-          key =>
-            Status[key] ===
-            status
-        ) ||
-        `UNKNOWN(${status})`;
+        getDiscordStatusName(
+          status
+        );
 
       const ping =
         client.ws.ping;
@@ -2375,24 +2630,9 @@ setInterval(
         `[WATCHDOG] Discord=${statusName} | ` +
         `user=${client.user ? client.user.tag : 'non connecté'} | ` +
         `ping=${ping}ms | ` +
-        `uptime=${uptime}s`
+        `uptime=${uptime}s | ` +
+        `Twitch=${twitchEventSubSocket && twitchEventSubSocket.readyState === WebSocket.OPEN ? 'connected' : 'disconnected'}`
       );
-
-      /*
-       * IMPORTANT :
-       *
-       * Aucune reconnexion forcée ici.
-       *
-       * discord.js gère déjà :
-       *
-       * - heartbeat
-       * - reconnexion
-       * - resume
-       * - reconnexion du shard
-       *
-       * Le watchdog sert uniquement
-       * à afficher l'état réel.
-       */
 
       if (
         status ===
@@ -2428,28 +2668,24 @@ setInterval(
       );
 
     } catch (error) {
-
       console.error(
         '❌ Watchdog Discord :',
         error.message
       );
     }
-
   },
   WATCHDOG_INTERVAL
 );
 
 
 // ============================================================
-// SERVEUR HTTP RENDER
+// SERVEUR HTTP
 // ============================================================
 
 const server =
   http.createServer(
     async (req, res) => {
-
       try {
-
         const url =
           new URL(
             req.url,
@@ -2464,7 +2700,6 @@ const server =
           url.pathname ===
           '/'
         ) {
-
           const online =
             client.ws.status ===
             Status.Ready;
@@ -2497,24 +2732,27 @@ const server =
           url.pathname ===
           '/health'
         ) {
-
           const discordStatus =
             client.ws.status;
 
-          const healthy =
+          const discordReady =
             discordStatus ===
             Status.Ready;
 
           const statusName =
-            Object.keys(Status).find(
-              key =>
-                Status[key] ===
-                discordStatus
-            ) ||
-            `UNKNOWN(${discordStatus})`;
+            getDiscordStatusName(
+              discordStatus
+            );
+
+          const twitchConnected =
+            Boolean(
+              twitchEventSubSocket &&
+              twitchEventSubSocket.readyState ===
+                WebSocket.OPEN
+            );
 
           res.writeHead(
-            healthy
+            discordReady
               ? 200
               : 503,
 
@@ -2525,74 +2763,75 @@ const server =
           );
 
           res.end(
-            JSON.stringify(
-              {
-                status:
-                  healthy
-                    ? 'online'
-                    : 'degraded',
+            JSON.stringify({
+              status:
+                discordReady
+                  ? 'online'
+                  : 'degraded',
 
-                discord:
-                  statusName,
+              discord:
+                statusName,
 
-                ping:
-                  client.ws.ping,
+              discordReady,
 
-                user:
-                  client.user
-                    ? client.user.tag
-                    : null,
+              ping:
+                client.ws.ping,
 
-                uptime:
-                  process.uptime(),
+              user:
+                client.user
+                  ? client.user.tag
+                  : null,
 
-                discordReadyAt:
-                  discordReadyAt
-                    ? new Date(
-                        discordReadyAt
-                      ).toISOString()
-                    : null,
+              uptime:
+                process.uptime(),
 
-                twitchEventSub:
-                  twitchEventSubSocket &&
-                  twitchEventSubSocket.readyState ===
-                    WebSocket.OPEN
-                    ? 'connected'
-                    : 'disconnected',
+              discordReadyAt:
+                discordReadyAt
+                  ? new Date(
+                      discordReadyAt
+                    ).toISOString()
+                  : null,
 
-                shuttingDown:
-                  shuttingDown,
+              twitch: {
+                connected:
+                  twitchConnected,
 
-                timestamp:
-                  new Date().toISOString()
-              }
-            )
+                sessionId:
+                  twitchEventSubSessionId,
+
+                userId:
+                  twitchUserId
+              },
+
+              shuttingDown,
+
+              timestamp:
+                new Date().toISOString()
+            })
           );
 
           return;
         }
 
         // ------------------------------------------------------
-        // TWITCH CALLBACK
+        // TWITCH OAUTH CALLBACK
         // ------------------------------------------------------
 
         if (
           url.pathname ===
           '/twitch/callback'
         ) {
-
           const code =
             url.searchParams.get(
               'code'
             );
 
-          const error =
+          const oauthError =
             url.searchParams.get(
               'error'
             );
 
-          if (error) {
-
+          if (oauthError) {
             res.writeHead(
               200,
               {
@@ -2610,7 +2849,6 @@ const server =
           }
 
           if (!code) {
-
             res.writeHead(
               400,
               {
@@ -2628,7 +2866,6 @@ const server =
           }
 
           try {
-
             const response =
               await fetch(
                 'https://id.twitch.tv/oauth2/token',
@@ -2664,7 +2901,6 @@ const server =
               await response.json();
 
             if (!response.ok) {
-
               console.error(
                 '❌ Erreur OAuth Twitch :',
                 data
@@ -2685,8 +2921,12 @@ const server =
               return;
             }
 
-            process.env.TWITCH_ACCESS_TOKEN =
-              data.access_token;
+            if (
+              data.access_token
+            ) {
+              process.env.TWITCH_ACCESS_TOKEN =
+                data.access_token;
+            }
 
             if (
               data.refresh_token
@@ -2718,7 +2958,6 @@ const server =
             );
 
           } catch (error) {
-
             console.error(
               '❌ Erreur OAuth :',
               error.message
@@ -2757,7 +2996,6 @@ const server =
         );
 
       } catch (error) {
-
         console.error(
           '❌ Erreur serveur HTTP :',
           error
@@ -2782,14 +3020,13 @@ const server =
 
 
 // ============================================================
-// SERVEUR
+// SERVEUR HTTP
 // ============================================================
 
 server.listen(
   PORT,
   '0.0.0.0',
   () => {
-
     console.log(
       `🌐 Serveur HTTP actif sur le port ${PORT}`
     );
@@ -2802,7 +3039,6 @@ server.listen(
 // ============================================================
 
 async function initializeTwitch() {
-
   console.log(
     'Initialisation Twitch...'
   );
@@ -2811,7 +3047,6 @@ async function initializeTwitch() {
     await refreshTwitchToken();
 
   if (!tokenReady) {
-
     console.error(
       '❌ Impossible d’initialiser Twitch.'
     );
@@ -2832,19 +3067,21 @@ async function initializeTwitch() {
     return;
   }
 
+  twitchUserId =
+    userId;
+
   console.log(
-    `ID Twitch de ${TWITCH_USERNAME}:`,
-    userId
+    `ID Twitch de ${TWITCH_USERNAME}: ${userId}`
   );
 
-  connectTwitchEventSub(
+  await connectTwitchEventSub(
     userId
   );
 }
 
 
 // ============================================================
-// DIAGNOSTIC
+// DIAGNOSTIC DÉMARRAGE
 // ============================================================
 
 console.log(
@@ -2902,53 +3139,54 @@ console.log(
 // LOGIN DISCORD
 // ============================================================
 
-if (!DISCORD_TOKEN) {
+async function initializeDiscord() {
+  if (!DISCORD_TOKEN) {
+    console.error(
+      '❌ Aucun DISCORD_TOKEN configuré.'
+    );
 
-  console.error(
-    '❌ Aucun DISCORD_TOKEN configuré.'
-  );
-
-} else {
+    return;
+  }
 
   console.log(
     '🔐 Connexion à Discord...'
   );
 
-  client.login(
-    DISCORD_TOKEN
-  )
-    .then(() => {
+  try {
+    await client.login(
+      DISCORD_TOKEN
+    );
 
-      console.log(
-        '✅ Login Discord envoyé.'
-      );
+    console.log(
+      '✅ Login Discord envoyé.'
+    );
 
-    })
-    .catch(error => {
-
-      console.error(
-        '❌ Erreur login Discord :',
-        error
-      );
-
-      /*
-       * IMPORTANT :
-       *
-       * On ne fait PAS de boucle
-       * client.login() ici.
-       *
-       * discord.js gère les reconnexions
-       * du Gateway une fois connecté.
-       */
-    });
+  } catch (error) {
+    console.error(
+      '❌ Erreur login Discord :',
+      error
+    );
+  }
 }
 
 
 // ============================================================
-// INITIALISATION TWITCH
+// INITIALISATION GLOBALE
 // ============================================================
 
-initializeTwitch();
+(async () => {
+  await initializeDiscord();
+
+  /*
+   * On initialise Twitch indépendamment
+   * de Discord.
+   *
+   * Une panne Twitch ne doit pas empêcher
+   * le bot Discord de fonctionner.
+   */
+
+  await initializeTwitch();
+})();
 
 
 // ============================================================
@@ -2957,7 +3195,6 @@ initializeTwitch();
 
 setInterval(
   () => {
-
     if (shuttingDown) {
       return;
     }
@@ -2965,7 +3202,6 @@ setInterval(
     console.log(
       `[PROCESS] Nexus actif depuis ${Math.floor(process.uptime())} secondes.`
     );
-
   },
   30000
 );
@@ -2977,7 +3213,6 @@ setInterval(
 
 setInterval(
   () => {
-
     const now =
       Date.now();
 
@@ -2992,7 +3227,6 @@ setInterval(
       ]
       of detectionTracker.entries()
     ) {
-
       data.general =
         data.general.filter(
           timestamp =>
@@ -3013,7 +3247,6 @@ setInterval(
         data.sensitive.length ===
           0
       ) {
-
         detectionTracker.delete(
           userId
         );
@@ -3021,22 +3254,34 @@ setInterval(
     }
 
     // --------------------------------------------------------
-    // Demandes anciennes
+    // Cooldowns
     // --------------------------------------------------------
 
-    /*
-     * Les demandes restent actuellement
-     * en mémoire jusqu'au redémarrage.
-     *
-     * On évite simplement que la Map
-     * grossisse indéfiniment.
-     */
+    for (
+      const [
+        userId,
+        timestamp
+      ]
+      of sanctionCooldowns.entries()
+    ) {
+      if (
+        now - timestamp >
+        SANCTION_COOLDOWN
+      ) {
+        sanctionCooldowns.delete(
+          userId
+        );
+      }
+    }
+
+    // --------------------------------------------------------
+    // Demandes
+    // --------------------------------------------------------
 
     if (
       sanctionRequests.size >
       500
     ) {
-
       const requests =
         Array.from(
           sanctionRequests.entries()
@@ -3071,7 +3316,6 @@ setInterval(
 process.on(
   'unhandledRejection',
   error => {
-
     console.error(
       '🔴 UNHANDLED REJECTION :',
       error
@@ -3083,25 +3327,43 @@ process.on(
 process.on(
   'uncaughtException',
   error => {
-
     console.error(
       '🔴 UNCAUGHT EXCEPTION :',
       error
     );
+
+    /*
+     * IMPORTANT :
+     *
+     * On ne fait PAS process.exit()
+     * automatiquement ici.
+     *
+     * Cela permet de conserver les logs
+     * et d'éviter un redémarrage sauvage.
+     */
   }
 );
 
 
 // ============================================================
-// ARRÊT PROPRE — SIGTERM
+// ARRÊT PROPRE
 // ============================================================
 
 async function gracefulShutdown(
   signal
 ) {
-  if (shuttingDown) {
+  if (
+    shutdownStarted
+  ) {
+    console.warn(
+      `⚠️ ${signal} reçu alors que l'arrêt est déjà en cours.`
+    );
+
     return;
   }
+
+  shutdownStarted =
+    true;
 
   shuttingDown =
     true;
@@ -3111,35 +3373,53 @@ async function gracefulShutdown(
   );
 
   // ----------------------------------------------------------
-  // Twitch
+  // TWITCH TIMER
   // ----------------------------------------------------------
 
-  if (twitchReconnectTimer) {
-    clearTimeout(
-      twitchReconnectTimer
-    );
+  clearTwitchReconnectTimer();
 
-    twitchReconnectTimer =
-      null;
-  }
+  // ----------------------------------------------------------
+  // TWITCH SOCKET
+  // ----------------------------------------------------------
 
   if (
     twitchEventSubSocket
   ) {
     try {
-      twitchEventSubSocket.close();
+      twitchEventSubSocket.close(
+        1000,
+        'Nexus shutdown'
+      );
     } catch {}
   }
 
+  twitchEventSubSocket =
+    null;
+
+  twitchEventSubSessionId =
+    null;
+
+  twitchEventSubConnecting =
+    false;
+
   // ----------------------------------------------------------
-  // Discord
+  // DISCORD
   // ----------------------------------------------------------
 
   try {
-    client.destroy();
+    if (
+      client &&
+      client.ws
+    ) {
+      console.log(
+        '🔌 Fermeture Discord...'
+      );
+
+      client.destroy();
+    }
   } catch (error) {
     console.error(
-      'Erreur fermeture Discord :',
+      '❌ Erreur fermeture Discord :',
       error.message
     );
   }
@@ -3151,15 +3431,31 @@ async function gracefulShutdown(
   try {
     await new Promise(
       resolve => {
+        let resolved =
+          false;
 
-        server.close(
+        const finish =
           () => {
+            if (resolved) {
+              return;
+            }
+
+            resolved =
+              true;
+
             resolve();
-          }
-        );
+          };
+
+        try {
+          server.close(
+            finish
+          );
+        } catch {
+          finish();
+        }
 
         setTimeout(
-          resolve,
+          finish,
           5000
         );
       }
@@ -3169,6 +3465,13 @@ async function gracefulShutdown(
   console.log(
     '🛑 Nexus arrêté proprement.'
   );
+
+  /*
+   * Render attend que le processus
+   * termine après SIGTERM.
+   *
+   * On quitte volontairement ici.
+   */
 
   process.exit(0);
 }
@@ -3191,4 +3494,13 @@ process.on(
       'SIGINT'
     );
   }
+);
+
+
+// ============================================================
+// FIN
+// ============================================================
+
+console.log(
+  '🚀 Nexus initialisé.'
 );

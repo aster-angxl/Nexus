@@ -1,4 +1,3 @@
-```js
 'use strict';
 
 require('dotenv').config();
@@ -4752,4 +4751,3 @@ process.on(
       'SIGINT'
     )
 );
-```

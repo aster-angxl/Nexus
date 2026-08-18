@@ -22,32 +22,21 @@ const {
 // CONFIGURATION
 // ============================================================
 
-const PORT =
-  process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-const DISCORD_TOKEN =
-  process.env.DISCORD_TOKEN;
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 
-const DISCORD_CLIENT_ID =
-  process.env.DISCORD_CLIENT_ID;
-
-const TWITCH_CLIENT_ID =
-  process.env.TWITCH_CLIENT_ID;
-
-const TWITCH_CLIENT_SECRET =
-  process.env.TWITCH_CLIENT_SECRET;
+const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
+const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 
 const TWITCH_REDIRECT_URI =
   'https://nexus-bpsk.onrender.com/twitch/callback';
 
-const TWITCH_USERNAME =
-  'aster_angxl';
+const TWITCH_USERNAME = 'aster_angxl';
 
-const STREAM_CHANNEL_ID =
-  '1532589426297929799';
-
-const SANCTION_CHANNEL_ID =
-  '1538498193728475197';
+const STREAM_CHANNEL_ID = '1532589426297929799';
+const SANCTION_CHANNEL_ID = '1538498193728475197';
 
 
 // ============================================================
@@ -56,19 +45,11 @@ const SANCTION_CHANNEL_ID =
 
 const GENERAL_INSULT_THRESHOLD = 3;
 
-const DETECTION_WINDOW =
-  60 * 1000;
+const DETECTION_WINDOW = 60 * 1000;
 
-const SANCTION_COOLDOWN =
-  5 * 60 * 1000;
-
-
-// ------------------------------------------------------------
-// INSULTES GÉNÉRALES
-// ------------------------------------------------------------
+const SANCTION_COOLDOWN = 5 * 60 * 1000;
 
 const GENERAL_INSULTS = [
-
   'connard',
   'connasse',
   'con',
@@ -82,19 +63,9 @@ const GENERAL_INSULTS = [
   'ntm',
   'merde',
   'putain'
-
 ];
 
-
-// ------------------------------------------------------------
-// TERMES SENSIBLES
-// ------------------------------------------------------------
-
-const SENSITIVE_PATTERNS = [
-
-  // À compléter selon les règles du serveur.
-
-];
+const SENSITIVE_PATTERNS = [];
 
 
 // ============================================================
@@ -103,23 +74,18 @@ const SENSITIVE_PATTERNS = [
 
 let lastAnnouncedStreamId = null;
 
-const detectionTracker =
-  new Map();
-
-const sanctionCooldowns =
-  new Map();
-
-const sanctionRequests =
-  new Map();
+const detectionTracker = new Map();
+const sanctionCooldowns = new Map();
+const sanctionRequests = new Map();
 
 
 // ============================================================
-// ÉTAT CONNEXION DISCORD
+// ÉTAT DISCORD
 // ============================================================
 
 let discordReadyAt = null;
 
-let lastDiscordEventAt = Date.now();
+let lastDiscordActivityAt = 0;
 
 let reconnectingDiscord = false;
 
@@ -127,97 +93,65 @@ let reconnectAttempts = 0;
 
 let lastReconnectAt = 0;
 
-const RECONNECT_COOLDOWN =
-  30 * 1000;
+const DISCORD_WATCHDOG_INTERVAL = 30 * 1000;
 
-const DISCORD_WATCHDOG_INTERVAL =
-  30 * 1000;
+// Si aucune activité Discord n'est détectée pendant 3 minutes
+// alors que le client devrait être connecté, le watchdog vérifie.
+const DISCORD_STALE_TIMEOUT = 3 * 60 * 1000;
 
-const DISCORD_STALE_TIMEOUT =
-  2 * 60 * 1000;
+// Minimum entre deux reconnexions forcées.
+const RECONNECT_COOLDOWN = 30 * 1000;
 
 
 // ============================================================
 // CLIENT DISCORD
 // ============================================================
 
-const client =
-  new Client({
-
-    intents: [
-
-      GatewayIntentBits.Guilds,
-
-      GatewayIntentBits.GuildMessages,
-
-      GatewayIntentBits.MessageContent,
-
-      GatewayIntentBits.GuildMembers
-
-    ]
-
-  });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers
+  ]
+});
 
 
 // ============================================================
 // OUTILS
 // ============================================================
 
-function normalizeText(text) {
-
-  return text
-
-    .toLowerCase()
-
-    .normalize('NFD')
-
-    .replace(
-      /[\u0300-\u036f]/g,
-      ''
-    )
-
-    .replace(
-      /[_\-.,!?;:/\\]+/g,
-      ' '
-    )
-
-    .replace(
-      /\s+/g,
-      ' '
-    )
-
-    .trim();
-
+function markDiscordActivity() {
+  lastDiscordActivityAt = Date.now();
 }
 
 
-function containsWord(
-  content,
-  word
-) {
+function normalizeText(text) {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\-.,!?;:/\\]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
-  const normalizedContent =
-    normalizeText(content);
 
-  const normalizedWord =
-    normalizeText(word);
+function containsWord(content, word) {
+  const normalizedContent = normalizeText(content);
+  const normalizedWord = normalizeText(word);
 
-  const escaped =
-    normalizedWord.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      '\\$&'
-    );
-
-  const regex =
-    new RegExp(
-      `(^|\\s)${escaped}(?=\\s|$)`,
-      'i'
-    );
-
-  return regex.test(
-    normalizedContent
+  const escaped = normalizedWord.replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&'
   );
 
+  const regex = new RegExp(
+    `(^|\\s)${escaped}(?=\\s|$)`,
+    'i'
+  );
+
+  return regex.test(normalizedContent);
 }
 
 
@@ -225,61 +159,28 @@ function containsWord(
 // AUTO-MODÉRATION
 // ============================================================
 
-function detectModeration(
-  content
-) {
-
+function detectModeration(content) {
   let general = false;
   let sensitive = false;
 
-
-  for (
-    const word
-    of GENERAL_INSULTS
-  ) {
-
-    if (
-      containsWord(
-        content,
-        word
-      )
-    ) {
-
+  for (const word of GENERAL_INSULTS) {
+    if (containsWord(content, word)) {
       general = true;
-
       break;
-
     }
-
   }
 
-
-  for (
-    const word
-    of SENSITIVE_PATTERNS
-  ) {
-
-    if (
-      containsWord(
-        content,
-        word
-      )
-    ) {
-
+  for (const word of SENSITIVE_PATTERNS) {
+    if (containsWord(content, word)) {
       sensitive = true;
-
       break;
-
     }
-
   }
-
 
   return {
     general,
     sensitive
   };
-
 }
 
 
@@ -287,78 +188,39 @@ function detectModeration(
 // ENREGISTRER UNE DÉTECTION
 // ============================================================
 
-function registerDetection(
-  userId,
-  type
-) {
+function registerDetection(userId, type) {
+  const now = Date.now();
 
-  const now =
-    Date.now();
-
-  let data =
-    detectionTracker.get(
-      userId
-    );
-
+  let data = detectionTracker.get(userId);
 
   if (!data) {
-
     data = {
-
       general: [],
       sensitive: []
-
     };
-
   }
 
-
-  data.general =
-    data.general.filter(
-      timestamp =>
-        now - timestamp <
-        DETECTION_WINDOW
-    );
-
-
-  data.sensitive =
-    data.sensitive.filter(
-      timestamp =>
-        now - timestamp <
-        DETECTION_WINDOW
-    );
-
-
-  if (
-    type === 'general'
-  ) {
-
-    data.general.push(
-      now
-    );
-
-  }
-
-
-  if (
-    type === 'sensitive'
-  ) {
-
-    data.sensitive.push(
-      now
-    );
-
-  }
-
-
-  detectionTracker.set(
-    userId,
-    data
+  data.general = data.general.filter(
+    timestamp =>
+      now - timestamp < DETECTION_WINDOW
   );
 
+  data.sensitive = data.sensitive.filter(
+    timestamp =>
+      now - timestamp < DETECTION_WINDOW
+  );
+
+  if (type === 'general') {
+    data.general.push(now);
+  }
+
+  if (type === 'sensitive') {
+    data.sensitive.push(now);
+  }
+
+  detectionTracker.set(userId, data);
 
   return data;
-
 }
 
 
@@ -367,113 +229,73 @@ function registerDetection(
 // ============================================================
 
 async function refreshTwitchToken() {
-
-  const refreshToken =
-    process.env.TWITCH_REFRESH_TOKEN;
-
+  const refreshToken = process.env.TWITCH_REFRESH_TOKEN;
 
   if (!refreshToken) {
-
     console.error(
-      'Refresh Token Twitch absent.'
+      '❌ Refresh Token Twitch absent.'
     );
 
     return false;
-
   }
 
-
   try {
+    const response = await fetch(
+      'https://id.twitch.tv/oauth2/token',
+      {
+        method: 'POST',
 
-    const response =
-      await fetch(
-        'https://id.twitch.tv/oauth2/token',
-        {
+        headers: {
+          'Content-Type':
+            'application/x-www-form-urlencoded'
+        },
 
-          method: 'POST',
+        body: new URLSearchParams({
+          client_id: TWITCH_CLIENT_ID,
+          client_secret: TWITCH_CLIENT_SECRET,
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken
+        })
+      }
+    );
 
-          headers: {
-
-            'Content-Type':
-              'application/x-www-form-urlencoded'
-
-          },
-
-          body:
-            new URLSearchParams({
-
-              client_id:
-                TWITCH_CLIENT_ID,
-
-              client_secret:
-                TWITCH_CLIENT_SECRET,
-
-              grant_type:
-                'refresh_token',
-
-              refresh_token:
-                refreshToken
-
-            })
-
-        }
-      );
-
-
-    const data =
-      await response.json();
-
+    const data = await response.json();
 
     if (!response.ok) {
-
       console.error(
-        'Erreur renouvellement Twitch :',
-        data.message ||
-        'Erreur inconnue'
+        '❌ Erreur renouvellement Twitch :',
+        data.message || 'Erreur inconnue'
       );
 
       return false;
-
     }
-
 
     process.env.TWITCH_ACCESS_TOKEN =
       data.access_token;
 
-
     console.log(
-      'Access Token Twitch renouvelé avec succès.'
+      '✅ Access Token Twitch renouvelé avec succès.'
     );
 
-
-    if (
-      data.refresh_token
-    ) {
-
+    if (data.refresh_token) {
       process.env.TWITCH_REFRESH_TOKEN =
         data.refresh_token;
 
       console.log(
-        'Nouveau Refresh Token Twitch reçu.'
+        '✅ Nouveau Refresh Token Twitch reçu.'
       );
-
     }
-
 
     return true;
 
-
   } catch (error) {
-
     console.error(
-      'Erreur connexion Twitch :',
+      '❌ Erreur connexion Twitch :',
       error.message
     );
 
     return false;
-
   }
-
 }
 
 
@@ -481,87 +303,59 @@ async function refreshTwitchToken() {
 // TWITCH — UTILISATEUR
 // ============================================================
 
-async function getTwitchUserId(
-  username
-) {
-
+async function getTwitchUserId(username) {
   const accessToken =
     process.env.TWITCH_ACCESS_TOKEN;
 
-
   if (!accessToken) {
-
     console.error(
-      'Access Token Twitch absent.'
+      '❌ Access Token Twitch absent.'
     );
 
     return null;
-
   }
 
-
   try {
-
-    const response =
-      await fetch(
-        `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`,
-        {
-
-          headers: {
-
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`
-
-          }
-
+    const response = await fetch(
+      `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`,
+      {
+        headers: {
+          'Client-ID': TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${accessToken}`
         }
-      );
+      }
+    );
 
-
-    const data =
-      await response.json();
-
+    const data = await response.json();
 
     if (
       !response.ok ||
       !data.data ||
       !data.data.length
     ) {
-
       console.error(
-        'Utilisateur Twitch introuvable :',
-        data.message ||
-        'Erreur inconnue'
+        '❌ Utilisateur Twitch introuvable :',
+        data.message || 'Erreur inconnue'
       );
 
       return null;
-
     }
-
 
     console.log(
       'Compte Twitch trouvé :',
       data.data[0].login
     );
 
-
     return data.data[0].id;
 
-
   } catch (error) {
-
     console.error(
-      'Erreur récupération utilisateur Twitch :',
+      '❌ Erreur récupération utilisateur Twitch :',
       error.message
     );
 
     return null;
-
   }
-
 }
 
 
@@ -569,69 +363,45 @@ async function getTwitchUserId(
 // TWITCH — PROFIL
 // ============================================================
 
-async function getTwitchUser(
-  userId
-) {
-
+async function getTwitchUser(userId) {
   const accessToken =
     process.env.TWITCH_ACCESS_TOKEN;
-
 
   if (!accessToken) {
     return null;
   }
 
-
   try {
-
-    const response =
-      await fetch(
-        `https://api.twitch.tv/helix/users?id=${userId}`,
-        {
-
-          headers: {
-
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`
-
-          }
-
+    const response = await fetch(
+      `https://api.twitch.tv/helix/users?id=${userId}`,
+      {
+        headers: {
+          'Client-ID': TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${accessToken}`
         }
-      );
+      }
+    );
 
-
-    const data =
-      await response.json();
-
+    const data = await response.json();
 
     if (
       !response.ok ||
       !data.data ||
       !data.data.length
     ) {
-
       return null;
-
     }
-
 
     return data.data[0];
 
-
   } catch (error) {
-
     console.error(
-      'Erreur profil Twitch :',
+      '❌ Erreur profil Twitch :',
       error.message
     );
 
     return null;
-
   }
-
 }
 
 
@@ -639,81 +409,53 @@ async function getTwitchUser(
 // TWITCH — LIVE
 // ============================================================
 
-async function getTwitchStream(
-  userId
-) {
-
+async function getTwitchStream(userId) {
   const accessToken =
     process.env.TWITCH_ACCESS_TOKEN;
-
 
   if (!accessToken) {
     return null;
   }
 
-
   try {
-
-    const response =
-      await fetch(
-        `https://api.twitch.tv/helix/streams?user_id=${userId}`,
-        {
-
-          headers: {
-
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`
-
-          }
-
+    const response = await fetch(
+      `https://api.twitch.tv/helix/streams?user_id=${userId}`,
+      {
+        headers: {
+          'Client-ID': TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${accessToken}`
         }
-      );
+      }
+    );
 
-
-    const data =
-      await response.json();
-
+    const data = await response.json();
 
     if (!response.ok) {
-
       console.error(
-        'Erreur récupération live Twitch :',
-        data.message ||
-        'Erreur inconnue'
+        '❌ Erreur récupération live Twitch :',
+        data.message || 'Erreur inconnue'
       );
 
       return null;
-
     }
-
 
     if (
       !data.data ||
       !data.data.length
     ) {
-
       return null;
-
     }
-
 
     return data.data[0];
 
-
   } catch (error) {
-
     console.error(
-      'Erreur API Twitch streams :',
+      '❌ Erreur API Twitch streams :',
       error.message
     );
 
     return null;
-
   }
-
 }
 
 
@@ -725,34 +467,26 @@ async function sendTwitchLiveAnnouncement(
   stream,
   twitchUser
 ) {
-
   try {
-
     const channel =
       await client.channels.fetch(
         STREAM_CHANNEL_ID
       );
 
-
     if (!channel) {
-
       console.error(
-        'Salon Twitch introuvable.'
+        '❌ Salon Twitch introuvable.'
       );
 
       return false;
-
     }
-
 
     const gameName =
       stream.game_name ||
       'Jeu non renseigné';
 
-
     const twitchUrl =
       `https://www.twitch.tv/${TWITCH_USERNAME}`;
-
 
     const profileImage =
       twitchUser &&
@@ -760,79 +494,45 @@ async function sendTwitchLiveAnnouncement(
         ? twitchUser.profile_image_url
         : null;
 
-
     const embed =
       new EmbedBuilder()
-
-        .setColor(
-          0x9146FF
-        )
-
+        .setColor(0x9146FF)
         .setTitle(
           '🔴 ASTER ANGXL EST EN LIVE !'
         )
-
-        .setURL(
-          twitchUrl
-        )
-
+        .setURL(twitchUrl)
         .setDescription(
-
           `Il vient de lancer un live sur **${gameName}** 🎮\n\n` +
-
           `Passe lui faire un coucou 👀\n\n` +
-
           `👉 **[Regarder le live](${twitchUrl})**`
-
         )
-
         .setFooter({
-
-          text:
-            'Nexus • Twitch'
-
+          text: 'Nexus • Twitch'
         })
-
         .setTimestamp();
 
-
     if (profileImage) {
-
-      embed.setThumbnail(
-        profileImage
-      );
-
+      embed.setThumbnail(profileImage);
     }
 
-
     await channel.send({
-
-      embeds: [
-        embed
-      ]
-
+      embeds: [embed]
     });
 
-
     console.log(
-      'Annonce Twitch envoyée sur Discord.'
+      '✅ Annonce Twitch envoyée sur Discord.'
     );
-
 
     return true;
 
-
   } catch (error) {
-
     console.error(
-      'Erreur annonce Twitch :',
+      '❌ Erreur annonce Twitch :',
       error.message
     );
 
     return false;
-
   }
-
 }
 
 
@@ -844,112 +544,70 @@ async function createStreamOnlineSubscription(
   sessionId,
   userId
 ) {
-
   const accessToken =
     process.env.TWITCH_ACCESS_TOKEN;
 
-
   if (!accessToken) {
-
     console.error(
-      'Access Token absent pour EventSub.'
+      '❌ Access Token absent pour EventSub.'
     );
 
     return false;
-
   }
 
-
   try {
+    const response = await fetch(
+      'https://api.twitch.tv/helix/eventsub/subscriptions',
+      {
+        method: 'POST',
 
-    const response =
-      await fetch(
-        'https://api.twitch.tv/helix/eventsub/subscriptions',
-        {
+        headers: {
+          'Client-ID': TWITCH_CLIENT_ID,
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
 
-          method: 'POST',
+        body: JSON.stringify({
+          type: 'stream.online',
+          version: '1',
 
-          headers: {
-
-            'Client-ID':
-              TWITCH_CLIENT_ID,
-
-            'Authorization':
-              `Bearer ${accessToken}`,
-
-            'Content-Type':
-              'application/json'
-
+          condition: {
+            broadcaster_user_id: userId
           },
 
-          body:
-            JSON.stringify({
+          transport: {
+            method: 'websocket',
+            session_id: sessionId
+          }
+        })
+      }
+    );
 
-              type:
-                'stream.online',
-
-              version:
-                '1',
-
-              condition: {
-
-                broadcaster_user_id:
-                  userId
-
-              },
-
-              transport: {
-
-                method:
-                  'websocket',
-
-                session_id:
-                  sessionId
-
-              }
-
-            })
-
-        }
-      );
-
-
-    const data =
-      await response.json();
-
+    const data = await response.json();
 
     if (!response.ok) {
-
       console.error(
-        'Erreur EventSub :',
-        data.message ||
-        'Erreur inconnue'
+        '❌ Erreur EventSub :',
+        data.message || 'Erreur inconnue'
       );
 
       return false;
-
     }
 
-
     console.log(
-      'Subscription EventSub créée !'
+      '✅ Subscription EventSub créée !'
     );
-
 
     return true;
 
-
   } catch (error) {
-
     console.error(
-      'Erreur EventSub :',
+      '❌ Erreur EventSub :',
       error.message
     );
 
     return false;
-
   }
-
 }
 
 
@@ -962,244 +620,182 @@ function connectTwitchEventSub(
   websocketUrl =
     'wss://eventsub.wss.twitch.tv/ws'
 ) {
-
   console.log(
     'Connexion à Twitch EventSub...'
   );
 
-
   const ws =
-    new WebSocket(
-      websocketUrl
+    new WebSocket(websocketUrl);
+
+  ws.on('open', () => {
+    console.log(
+      '✅ Connexion Twitch EventSub ouverte.'
     );
+  });
 
+  ws.on('message', async rawMessage => {
+    try {
+      const message =
+        JSON.parse(
+          rawMessage.toString()
+        );
 
-  ws.on(
-    'open',
-    function () {
+      const messageType =
+        message.metadata &&
+        message.metadata.message_type;
 
       console.log(
-        'Connexion Twitch EventSub ouverte.'
+        'EventSub message :',
+        messageType
       );
 
-    }
-  );
-
-
-  ws.on(
-    'message',
-    async function (
-      rawMessage
-    ) {
-
-      try {
-
-        const message =
-          JSON.parse(
-            rawMessage.toString()
-          );
-
-
-        const messageType =
-          message.metadata &&
-          message.metadata.message_type;
-
+      if (
+        messageType ===
+        'session_welcome'
+      ) {
+        const sessionId =
+          message.payload.session.id;
 
         console.log(
-          'EventSub message :',
-          messageType
+          'Session EventSub reçue.'
         );
 
-
-        if (
-          messageType ===
-          'session_welcome'
-        ) {
-
-          const sessionId =
-            message.payload.session.id;
-
-
-          console.log(
-            'Session EventSub reçue.'
-          );
-
-
-          await createStreamOnlineSubscription(
-            sessionId,
-            userId
-          );
-
-
-          return;
-
-        }
-
-
-        if (
-          messageType ===
-          'notification'
-        ) {
-
-          const subscription =
-            message.payload.subscription;
-
-          const event =
-            message.payload.event;
-
-
-          if (
-            subscription &&
-            subscription.type ===
-              'stream.online' &&
-            event
-          ) {
-
-            const streamId =
-              event.id;
-
-
-            console.log(
-              'Nouveau live détecté.',
-              streamId
-            );
-
-
-            if (
-              lastAnnouncedStreamId ===
-              streamId
-            ) {
-
-              console.log(
-                'Live déjà annoncé.'
-              );
-
-              return;
-
-            }
-
-
-            const stream =
-              await getTwitchStream(
-                userId
-              );
-
-
-            if (!stream) {
-
-              console.error(
-                'Informations live introuvables.'
-              );
-
-              return;
-
-            }
-
-
-            const twitchUser =
-              await getTwitchUser(
-                userId
-              );
-
-
-            const sent =
-              await sendTwitchLiveAnnouncement(
-                stream,
-                twitchUser
-              );
-
-
-            if (sent) {
-
-              lastAnnouncedStreamId =
-                streamId;
-
-            }
-
-          }
-
-
-          return;
-
-        }
-
-
-        if (
-          messageType ===
-          'session_reconnect'
-        ) {
-
-          const reconnectUrl =
-            message.payload &&
-            message.payload.session &&
-            message.payload.session.reconnect_url;
-
-
-          if (reconnectUrl) {
-
-            ws.close();
-
-
-            setTimeout(
-              function () {
-
-                connectTwitchEventSub(
-                  userId,
-                  reconnectUrl
-                );
-
-              },
-              1000
-            );
-
-          }
-
-
-          return;
-
-        }
-
-
-      } catch (error) {
-
-        console.error(
-          'Erreur EventSub :',
-          error.message
+        await createStreamOnlineSubscription(
+          sessionId,
+          userId
         );
 
+        return;
       }
 
-    }
-  );
+      if (
+        messageType ===
+        'notification'
+      ) {
+        const subscription =
+          message.payload.subscription;
 
+        const event =
+          message.payload.event;
 
-  ws.on(
-    'error',
-    function (error) {
+        if (
+          subscription &&
+          subscription.type ===
+            'stream.online' &&
+          event
+        ) {
+          const streamId =
+            event.id;
 
+          console.log(
+            'Nouveau live détecté :',
+            streamId
+          );
+
+          if (
+            lastAnnouncedStreamId ===
+            streamId
+          ) {
+            console.log(
+              'Live déjà annoncé.'
+            );
+
+            return;
+          }
+
+          const stream =
+            await getTwitchStream(
+              userId
+            );
+
+          if (!stream) {
+            console.error(
+              '❌ Informations live introuvables.'
+            );
+
+            return;
+          }
+
+          const twitchUser =
+            await getTwitchUser(
+              userId
+            );
+
+          const sent =
+            await sendTwitchLiveAnnouncement(
+              stream,
+              twitchUser
+            );
+
+          if (sent) {
+            lastAnnouncedStreamId =
+              streamId;
+          }
+        }
+
+        return;
+      }
+
+      if (
+        messageType ===
+        'session_reconnect'
+      ) {
+        const reconnectUrl =
+          message.payload &&
+          message.payload.session &&
+          message.payload.session.reconnect_url;
+
+        if (reconnectUrl) {
+          console.log(
+            '🔄 Twitch demande une reconnexion EventSub.'
+          );
+
+          ws.close();
+
+          setTimeout(() => {
+            connectTwitchEventSub(
+              userId,
+              reconnectUrl
+            );
+          }, 1000);
+        }
+
+        return;
+      }
+
+    } catch (error) {
       console.error(
-        'Erreur WebSocket Twitch :',
+        '❌ Erreur EventSub :',
         error.message
       );
-
     }
-  );
+  });
 
+  ws.on('error', error => {
+    console.error(
+      '❌ Erreur WebSocket Twitch :',
+      error.message
+    );
+  });
 
-  ws.on(
-    'close',
-    function () {
+  ws.on('close', () => {
+    console.warn(
+      '🟠 Connexion EventSub fermée.'
+    );
 
+    // On tente de recréer la connexion Twitch.
+    setTimeout(() => {
       console.log(
-        'Connexion EventSub fermée.'
+        '🔄 Tentative de reconnexion Twitch EventSub...'
       );
 
-    }
-  );
-
+      connectTwitchEventSub(
+        userId
+      );
+    }, 5000);
+  });
 
   return ws;
-
 }
 
 
@@ -1208,247 +804,160 @@ function connectTwitchEventSub(
 // ============================================================
 
 async function createSanctionRequest({
-
   guild,
   targetUser,
   proposedSanction,
   reason,
   source,
   detectedMessage = null
-
 }) {
-
   try {
-
     const channel =
       await client.channels.fetch(
         SANCTION_CHANNEL_ID
       );
 
-
     if (!channel) {
-
       console.error(
-        'Salon demandes-sanctions introuvable.'
+        '❌ Salon demandes-sanctions introuvable.'
       );
 
       return null;
-
     }
-
 
     const requestId =
       `${Date.now()}_${targetUser.id}`;
 
-
     const request = {
+      id: requestId,
 
-      id:
-        requestId,
+      guildId: guild.id,
 
-      guildId:
-        guild.id,
+      targetUserId: targetUser.id,
 
-      targetUserId:
-        targetUser.id,
+      targetTag: targetUser.tag,
 
-      targetTag:
-        targetUser.tag,
+      proposedSanction,
 
-      proposedSanction:
-        proposedSanction,
+      finalSanction: proposedSanction,
 
-      finalSanction:
-        proposedSanction,
+      reason,
 
-      reason:
-        reason,
+      source,
 
-      source:
-        source,
+      detectedMessage,
 
-      detectedMessage:
-        detectedMessage,
+      yesVotes: new Set(),
 
-      yesVotes:
-        new Set(),
+      noVotes: new Set(),
 
-      noVotes:
-        new Set(),
+      status: 'pending',
 
-      status:
-        'pending',
-
-      messageId:
-        null
-
+      messageId: null
     };
-
 
     const sourceText =
       source === 'automatic'
         ? '🤖 Auto-modération'
         : `👮 Modérateur : <@${source}>`;
 
-
     const embed =
       new EmbedBuilder()
-
-        .setColor(
-          0xFFA500
-        )
-
+        .setColor(0xFFA500)
         .setTitle(
           '🚨 Demande de sanction'
         )
-
         .setDescription(
-
           `👤 **Membre :** <@${targetUser.id}>\n\n` +
-
           `⚠️ **Sanction proposée :** ${proposedSanction}\n\n` +
-
           `📝 **Raison :** ${reason}\n\n` +
-
           `🔎 **Source :** ${sourceText}`
-
         )
-
         .addFields({
-
-          name:
-            '🗳️ Votes',
+          name: '🗳️ Votes',
 
           value:
             '🟢 Pour : **0**\n' +
             '🔴 Contre : **0**\n\n' +
             'Validation automatique à **3 votes Pour**.'
-
+        })
+        .setFooter({
+          text:
+            `Nexus • ID ${requestId}`
         });
 
-
-    if (
-      detectedMessage
-    ) {
-
+    if (detectedMessage) {
       embed.addFields({
-
-        name:
-          '💬 Message concerné',
+        name: '💬 Message concerné',
 
         value:
-          detectedMessage.slice(
-            0,
-            1000
-          )
-
+          detectedMessage.slice(0, 1000)
       });
-
     }
-
-
-    embed.setFooter({
-
-      text:
-        `Nexus • ID ${requestId}`
-
-    });
-
 
     const buttons =
       new ActionRowBuilder()
-
         .addComponents(
 
           new ButtonBuilder()
-
             .setCustomId(
               `sanction_yes_${requestId}`
             )
-
-            .setLabel(
-              'Pour'
-            )
-
+            .setLabel('Pour')
             .setStyle(
               ButtonStyle.Success
             ),
 
           new ButtonBuilder()
-
             .setCustomId(
               `sanction_no_${requestId}`
             )
-
-            .setLabel(
-              'Contre'
-            )
-
+            .setLabel('Contre')
             .setStyle(
               ButtonStyle.Danger
             ),
 
           new ButtonBuilder()
-
             .setCustomId(
               `sanction_modify_${requestId}`
             )
-
             .setLabel(
               'Modifier la sanction'
             )
-
             .setStyle(
               ButtonStyle.Secondary
             )
-
         );
-
 
     const sentMessage =
       await channel.send({
-
-        embeds: [
-          embed
-        ],
-
-        components: [
-          buttons
-        ]
-
+        embeds: [embed],
+        components: [buttons]
       });
-
 
     request.messageId =
       sentMessage.id;
-
 
     sanctionRequests.set(
       requestId,
       request
     );
 
-
     console.log(
       'Demande de sanction créée :',
       requestId
     );
 
-
     return request;
 
-
   } catch (error) {
-
     console.error(
-      'Erreur création demande sanction :',
+      '❌ Erreur création demande sanction :',
       error.message
     );
 
     return null;
-
   }
-
 }
 
 
@@ -1456,27 +965,23 @@ async function createSanctionRequest({
 // PERMISSIONS
 // ============================================================
 
-function canModerate(
-  interaction
-) {
-
-  return interaction.memberPermissions &&
+function canModerate(interaction) {
+  return (
+    interaction.memberPermissions &&
     interaction.memberPermissions.has(
       PermissionFlagsBits.ManageMessages
-    );
-
+    )
+  );
 }
 
 
-function isAdmin(
-  interaction
-) {
-
-  return interaction.memberPermissions &&
+function isAdmin(interaction) {
+  return (
+    interaction.memberPermissions &&
     interaction.memberPermissions.has(
       PermissionFlagsBits.Administrator
-    );
-
+    )
+  );
 }
 
 
@@ -1489,107 +994,71 @@ async function handleSanctionVote(
   requestId,
   vote
 ) {
-
   if (
     !canModerate(interaction) &&
     !isAdmin(interaction)
   ) {
-
     await interaction.reply({
-
       content:
         '❌ Tu n’as pas la permission de participer à cette décision.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
 
     return;
-
   }
-
 
   const request =
     sanctionRequests.get(
       requestId
     );
 
-
   if (!request) {
-
     await interaction.reply({
-
       content:
         '❌ Cette demande n’est plus disponible en mémoire.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
 
     return;
-
   }
-
 
   if (
     request.status !==
     'pending'
   ) {
-
     await interaction.reply({
-
       content:
         '❌ Cette demande est déjà terminée.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
 
     return;
-
   }
-
 
   const voterId =
     interaction.user.id;
 
-
-  if (
-    isAdmin(interaction)
-  ) {
-
+  if (isAdmin(interaction)) {
     request.status =
       vote === 'yes'
         ? 'approved'
         : 'rejected';
 
-
     await interaction.reply({
-
       content:
         vote === 'yes'
           ? '👑 Décision administrative : demande validée.'
           : '👑 Décision administrative : demande refusée.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
-
 
     await finalizeSanctionRequest(
       request,
       interaction
     );
 
-
     return;
-
   }
-
 
   if (
     request.yesVotes.has(
@@ -1599,86 +1068,56 @@ async function handleSanctionVote(
       voterId
     )
   ) {
-
     await interaction.reply({
-
       content:
         '❌ Tu as déjà voté sur cette demande.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
 
     return;
-
   }
 
-
-  if (
-    vote === 'yes'
-  ) {
-
+  if (vote === 'yes') {
     request.yesVotes.add(
       voterId
     );
-
   } else {
-
     request.noVotes.add(
       voterId
     );
-
   }
-
 
   if (
     request.yesVotes.size >= 3
   ) {
-
     request.status =
       'approved';
 
-
     await interaction.reply({
-
       content:
         '🟢 3 votes favorables atteints. La demande est validée.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
-
 
     await finalizeSanctionRequest(
       request,
       interaction
     );
 
-
     return;
-
   }
-
 
   await updateSanctionMessage(
     request
   );
 
-
   await interaction.reply({
-
     content:
       vote === 'yes'
         ? '🟢 Ton vote Pour a été enregistré.'
         : '🔴 Ton vote Contre a été enregistré.',
-
-    ephemeral:
-      true
-
+    ephemeral: true
   });
-
 }
 
 
@@ -1690,143 +1129,93 @@ async function finalizeSanctionRequest(
   request,
   interaction
 ) {
-
   try {
-
     const channel =
       await client.channels.fetch(
         SANCTION_CHANNEL_ID
       );
-
 
     const message =
       await channel.messages.fetch(
         request.messageId
       );
 
-
     const approved =
       request.status ===
       'approved';
-
 
     const embed =
       EmbedBuilder.from(
         message.embeds[0]
       )
-
         .setColor(
           approved
             ? 0x00FF00
             : 0xFF0000
         )
-
         .addFields({
-
-          name:
-            '📌 Décision',
+          name: '📌 Décision',
 
           value:
             approved
               ? '🟢 **VALIDÉE**'
               : '🔴 **REFUSÉE**'
-
         });
-
 
     const disabledRow =
       new ActionRowBuilder()
-
         .addComponents(
 
           new ButtonBuilder()
-
             .setCustomId(
               `finished_yes_${request.id}`
             )
-
-            .setLabel(
-              'Pour'
-            )
-
+            .setLabel('Pour')
             .setStyle(
               ButtonStyle.Success
             )
-
-            .setDisabled(
-              true
-            ),
+            .setDisabled(true),
 
           new ButtonBuilder()
-
             .setCustomId(
               `finished_no_${request.id}`
             )
-
-            .setLabel(
-              'Contre'
-            )
-
+            .setLabel('Contre')
             .setStyle(
               ButtonStyle.Danger
             )
-
-            .setDisabled(
-              true
-            ),
+            .setDisabled(true),
 
           new ButtonBuilder()
-
             .setCustomId(
               `finished_modify_${request.id}`
             )
-
             .setLabel(
               'Modifier la sanction'
             )
-
             .setStyle(
               ButtonStyle.Secondary
             )
-
-            .setDisabled(
-              true
-            )
-
+            .setDisabled(true)
         );
 
-
     await message.edit({
-
-      embeds: [
-        embed
-      ],
-
-      components: [
-        disabledRow
-      ]
-
+      embeds: [embed],
+      components: [disabledRow]
     });
 
-
     console.log(
-
       approved
-        ? 'Demande validée — sanction NON appliquée pour le moment.'
-        : 'Demande refusée.'
-
+        ? '🟢 Demande validée — sanction NON appliquée pour le moment.'
+        : '🔴 Demande refusée.'
     );
-
 
   } catch (error) {
-
     console.error(
-      'Erreur finalisation sanction :',
+      '❌ Erreur finalisation sanction :',
       error.message
     );
-
   }
-
 }
 
 
@@ -1838,60 +1227,39 @@ async function handleModifySanction(
   interaction,
   requestId
 ) {
-
   if (
     !canModerate(interaction) &&
     !isAdmin(interaction)
   ) {
-
     await interaction.reply({
-
       content:
         '❌ Tu n’as pas la permission de modifier cette demande.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
 
     return;
-
   }
-
 
   const request =
     sanctionRequests.get(
       requestId
     );
 
-
   if (!request) {
-
     await interaction.reply({
-
       content:
         '❌ Demande introuvable.',
-
-      ephemeral:
-        true
-
+      ephemeral: true
     });
 
     return;
-
   }
 
-
   await interaction.reply({
-
     content:
       '🟡 La modification de sanction sera ajoutée dans la prochaine étape du système.',
-
-    ephemeral:
-      true
-
+    ephemeral: true
   });
-
 }
 
 
@@ -1902,62 +1270,45 @@ async function handleModifySanction(
 async function updateSanctionMessage(
   request
 ) {
-
   try {
-
     const channel =
       await client.channels.fetch(
         SANCTION_CHANNEL_ID
       );
-
 
     const message =
       await channel.messages.fetch(
         request.messageId
       );
 
-
     const embed =
       EmbedBuilder.from(
         message.embeds[0]
       );
 
-
     embed.spliceFields(
       0,
       1,
       {
-
-        name:
-          '🗳️ Votes',
+        name: '🗳️ Votes',
 
         value:
           `🟢 Pour : **${request.yesVotes.size}**\n` +
           `🔴 Contre : **${request.noVotes.size}**\n\n` +
           `Validation automatique à **3 votes Pour**.`
-
       }
     );
 
-
     await message.edit({
-
-      embeds: [
-        embed
-      ]
-
+      embeds: [embed]
     });
 
-
   } catch (error) {
-
     console.error(
-      'Erreur mise à jour demande :',
+      '❌ Erreur mise à jour demande :',
       error.message
     );
-
   }
-
 }
 
 
@@ -1967,7 +1318,9 @@ async function updateSanctionMessage(
 
 client.on(
   'interactionCreate',
-  async function (interaction) {
+  async interaction => {
+
+    markDiscordActivity();
 
     try {
 
@@ -1979,167 +1332,108 @@ client.on(
           interaction.commandName !==
           'sanction'
         ) {
-
           return;
-
         }
-
 
         if (
           !canModerate(interaction) &&
           !isAdmin(interaction)
         ) {
-
           await interaction.reply({
-
             content:
               '❌ Cette commande est réservée à la modération.',
-
-            ephemeral:
-              true
-
+            ephemeral: true
           });
 
           return;
-
         }
-
 
         const target =
           interaction.options.getUser(
             'membre'
           );
 
-
         const sanction =
           interaction.options.getString(
             'sanction'
           );
-
 
         const reason =
           interaction.options.getString(
             'raison'
           );
 
-
         if (!target) {
-
           await interaction.reply({
-
             content:
               '❌ Membre introuvable.',
-
-            ephemeral:
-              true
-
+            ephemeral: true
           });
 
           return;
-
         }
-
 
         if (
           target.id ===
           interaction.user.id
         ) {
-
           await interaction.reply({
-
             content:
               '❌ Tu ne peux pas créer une demande contre toi-même.',
-
-            ephemeral:
-              true
-
+            ephemeral: true
           });
 
           return;
-
         }
-
 
         const guild =
           interaction.guild;
-
 
         const member =
           await guild.members.fetch(
             target.id
           );
 
-
         if (
           member.permissions.has(
             PermissionFlagsBits.Administrator
           )
         ) {
-
           await interaction.reply({
-
             content:
               '❌ Une demande automatique ne peut pas viser un administrateur.',
-
-            ephemeral:
-              true
-
+            ephemeral: true
           });
 
           return;
-
         }
-
 
         const request =
           await createSanctionRequest({
-
             guild,
-
-            targetUser:
-              target,
-
-            proposedSanction:
-              sanction,
-
+            targetUser: target,
+            proposedSanction: sanction,
             reason,
-
-            source:
-              interaction.user.id
-
+            source: interaction.user.id
           });
 
-
         if (!request) {
-
           await interaction.reply({
-
             content:
               '❌ Impossible de créer la demande.',
-
-            ephemeral:
-              true
-
+            ephemeral: true
           });
 
           return;
-
         }
 
-
         await interaction.reply({
-
           content:
             '✅ Demande de sanction créée dans le salon staff.',
-
-          ephemeral:
-            true
-
+          ephemeral: true
         });
 
-
         return;
-
       }
 
 
@@ -2152,21 +1446,13 @@ client.on(
             '_'
           );
 
-
         const action =
           parts[1];
 
-
         const requestId =
-          parts
-            .slice(2)
-            .join('_');
+          parts.slice(2).join('_');
 
-
-        if (
-          action === 'yes'
-        ) {
-
+        if (action === 'yes') {
           await handleSanctionVote(
             interaction,
             requestId,
@@ -2174,14 +1460,9 @@ client.on(
           );
 
           return;
-
         }
 
-
-        if (
-          action === 'no'
-        ) {
-
+        if (action === 'no') {
           await handleSanctionVote(
             interaction,
             requestId,
@@ -2189,52 +1470,36 @@ client.on(
           );
 
           return;
-
         }
 
-
-        if (
-          action === 'modify'
-        ) {
-
+        if (action === 'modify') {
           await handleModifySanction(
             interaction,
             requestId
           );
 
           return;
-
         }
-
       }
 
     } catch (error) {
 
       console.error(
-        'Erreur interaction :',
+        '❌ Erreur interaction :',
         error
       );
-
 
       if (
         !interaction.replied &&
         !interaction.deferred
       ) {
-
         await interaction.reply({
-
           content:
             '❌ Une erreur est survenue.',
-
-          ephemeral:
-            true
-
+          ephemeral: true
         });
-
       }
-
     }
-
   }
 );
 
@@ -2245,48 +1510,37 @@ client.on(
 
 client.on(
   'messageCreate',
-  async function (message) {
+  async message => {
 
-    if (
-      message.author.bot
-    ) {
+    markDiscordActivity();
 
+    if (message.author.bot) {
       return;
-
     }
-
 
     if (
       !message.content ||
       !message.content.trim()
     ) {
-
       return;
-
     }
-
 
     const detected =
       detectModeration(
         message.content
       );
 
-
     if (
       !detected.general &&
       !detected.sensitive
     ) {
-
       return;
-
     }
-
 
     const type =
       detected.sensitive
         ? 'sensitive'
         : 'general';
-
 
     const data =
       registerDetection(
@@ -2294,32 +1548,22 @@ client.on(
         type
       );
 
-
     const generalCount =
       data.general.length;
-
 
     const sensitiveCount =
       data.sensitive.length;
 
-
     console.log(
-
       `[AUTO-MOD] ${message.author.tag} | ` +
       `générales=${generalCount} | ` +
       `sensibles=${sensitiveCount}`
-
     );
 
-
-    if (
-      detected.sensitive
-    ) {
+    if (detected.sensitive) {
 
       await createSanctionRequest({
-
-        guild:
-          message.guild,
+        guild: message.guild,
 
         targetUser:
           message.author,
@@ -2335,14 +1579,10 @@ client.on(
 
         detectedMessage:
           message.content
-
       });
 
-
       return;
-
     }
-
 
     if (
       generalCount >=
@@ -2352,32 +1592,25 @@ client.on(
       const now =
         Date.now();
 
-
       const lastRequest =
         sanctionCooldowns.get(
           message.author.id
         );
-
 
       if (
         lastRequest &&
         now - lastRequest <
         SANCTION_COOLDOWN
       ) {
-
         return;
-
       }
-
 
       sanctionCooldowns.set(
         message.author.id,
         now
       );
 
-
       await createSanctionRequest({
-
         guild:
           message.guild,
 
@@ -2395,11 +1628,8 @@ client.on(
 
         detectedMessage:
           message.content
-
       });
-
     }
-
   }
 );
 
@@ -2410,102 +1640,55 @@ client.on(
 
 const sanctionCommand =
   new SlashCommandBuilder()
-
-    .setName(
-      'sanction'
-    )
-
+    .setName('sanction')
     .setDescription(
       'Créer une demande de sanction pour un membre.'
     )
 
-    .addUserOption(
-      option =>
-
-        option
-
-          .setName(
-            'membre'
-          )
-
-          .setDescription(
-            'Membre concerné.'
-          )
-
-          .setRequired(
-            true
-          )
-
+    .addUserOption(option =>
+      option
+        .setName('membre')
+        .setDescription(
+          'Membre concerné.'
+        )
+        .setRequired(true)
     )
 
-    .addStringOption(
-      option =>
+    .addStringOption(option =>
+      option
+        .setName('sanction')
+        .setDescription(
+          'Sanction proposée.'
+        )
+        .setRequired(true)
 
-        option
-
-          .setName(
-            'sanction'
-          )
-
-          .setDescription(
-            'Sanction proposée.'
-          )
-
-          .setRequired(
-            true
-          )
-
-          .addChoices(
-
-            {
-              name:
-                'Avertissement',
-              value:
-                'Avertissement'
-            },
-
-            {
-              name:
-                'Timeout',
-              value:
-                'Timeout'
-            },
-
-            {
-              name:
-                'Kick',
-              value:
-                'Kick'
-            },
-
-            {
-              name:
-                'Ban',
-              value:
-                'Ban'
-            }
-
-          )
-
+        .addChoices(
+          {
+            name: 'Avertissement',
+            value: 'Avertissement'
+          },
+          {
+            name: 'Timeout',
+            value: 'Timeout'
+          },
+          {
+            name: 'Kick',
+            value: 'Kick'
+          },
+          {
+            name: 'Ban',
+            value: 'Ban'
+          }
+        )
     )
 
-    .addStringOption(
-      option =>
-
-        option
-
-          .setName(
-            'raison'
-          )
-
-          .setDescription(
-            'Explique la raison de la demande.'
-          )
-
-          .setRequired(
-            true
-          )
-
+    .addStringOption(option =>
+      option
+        .setName('raison')
+        .setDescription(
+          'Explique la raison de la demande.'
+        )
+        .setRequired(true)
     );
 
 
@@ -2516,70 +1699,46 @@ const sanctionCommand =
 async function registerCommands() {
 
   if (!DISCORD_TOKEN) {
-
     console.error(
       '❌ DISCORD_TOKEN absent.'
     );
 
     return false;
-
   }
 
-
   if (!DISCORD_CLIENT_ID) {
-
     console.error(
       '❌ DISCORD_CLIENT_ID absent.'
     );
 
-    console.error(
-      '⚠️ Les commandes slash ne peuvent pas être enregistrées.'
-    );
-
     return false;
-
   }
-
 
   try {
 
     const rest =
       new REST({
-
-        version:
-          '10'
-
+        version: '10'
       }).setToken(
         DISCORD_TOKEN
       );
 
-
     await rest.put(
-
       Routes.applicationCommands(
         DISCORD_CLIENT_ID
       ),
-
       {
-
         body: [
-
           sanctionCommand.toJSON()
-
         ]
-
       }
-
     );
-
 
     console.log(
       '✅ Commande /sanction enregistrée.'
     );
 
-
     return true;
-
 
   } catch (error) {
 
@@ -2589,36 +1748,29 @@ async function registerCommands() {
     );
 
     return false;
-
   }
-
 }
 
 
 // ============================================================
-// CONNEXION DISCORD
+// RECONNEXION DISCORD
 // ============================================================
 
 async function reconnectDiscord(
   reason = 'raison inconnue'
 ) {
 
-  if (
-    reconnectingDiscord
-  ) {
+  if (reconnectingDiscord) {
 
     console.log(
-      '🔄 Reconnexion déjà en cours, aucune nouvelle reconnexion lancée.'
+      '🔄 Reconnexion déjà en cours.'
     );
 
     return;
-
   }
-
 
   const now =
     Date.now();
-
 
   if (
     now - lastReconnectAt <
@@ -2630,37 +1782,29 @@ async function reconnectDiscord(
     );
 
     return;
-
   }
-
 
   reconnectingDiscord = true;
 
-  lastReconnectAt = now;
+  lastReconnectAt =
+    now;
 
   reconnectAttempts++;
 
-
   console.warn(
-    `🔄 Tentative de reconnexion Discord #${reconnectAttempts} — ${reason}`
+    `🔄 Reconnexion Discord #${reconnectAttempts} — ${reason}`
   );
-
 
   try {
 
     try {
-
       client.destroy();
-
     } catch (error) {
-
       console.error(
         'Erreur pendant destroy() :',
         error.message
       );
-
     }
-
 
     await new Promise(
       resolve =>
@@ -2670,16 +1814,15 @@ async function reconnectDiscord(
         )
     );
 
+    markDiscordActivity();
 
     await client.login(
       DISCORD_TOKEN
     );
 
-
     console.log(
-      '🟢 Reconnexion Discord demandée avec succès.'
+      '🟢 Reconnexion Discord réussie.'
     );
-
 
   } catch (error) {
 
@@ -2688,13 +1831,24 @@ async function reconnectDiscord(
       error
     );
 
+    // Nouvelle tentative plus tard.
+    setTimeout(
+      () => {
+        reconnectDiscord(
+          'Nouvelle tentative après échec'
+        );
+      },
+      Math.min(
+        60000,
+        5000 * reconnectAttempts
+      )
+    );
 
   } finally {
 
-    reconnectingDiscord = false;
-
+    reconnectingDiscord =
+      false;
   }
-
 }
 
 
@@ -2704,31 +1858,26 @@ async function reconnectDiscord(
 
 client.once(
   'ready',
-  async function () {
+  async () => {
 
     discordReadyAt =
       Date.now();
 
-    lastDiscordEventAt =
-      Date.now();
+    markDiscordActivity();
 
     reconnectAttempts =
       0;
-
 
     console.log(
       '🟢 Nexus est connecté en tant que ' +
       client.user.tag
     );
 
-
     console.log(
-      'Discord Gateway : READY'
+      '🟢 Discord Gateway : READY'
     );
 
-
     await registerCommands();
-
   }
 );
 
@@ -2739,184 +1888,226 @@ client.once(
 
 client.on(
   'error',
-  function (error) {
+  error => {
 
-    lastDiscordEventAt =
-      Date.now();
-
+    markDiscordActivity();
 
     console.error(
-      '🔴 Erreur Discord :',
+      '🔴 ERREUR DISCORD :',
       error
     );
-
   }
 );
 
 
 client.on(
   'warn',
-  function (message) {
+  message => {
 
     console.warn(
-      '[WARN]',
+      '[DISCORD WARN]',
       message
     );
-
   }
 );
 
 
 client.on(
   'debug',
-  function (message) {
+  message => {
 
-    lastDiscordEventAt =
-      Date.now();
-
+    markDiscordActivity();
 
     console.log(
-      '[DEBUG]',
+      '[DISCORD DEBUG]',
       message
     );
-
   }
 );
 
 
 client.on(
   'shardReady',
-  function (id) {
+  id => {
 
     discordReadyAt =
       Date.now();
 
-    lastDiscordEventAt =
-      Date.now();
+    markDiscordActivity();
 
+    reconnectAttempts =
+      0;
 
     console.log(
       '🟢 Shard prêt :',
       id
     );
-
   }
 );
 
 
 client.on(
   'shardDisconnect',
-  function (
-    event,
-    id
-  ) {
+  (event, id) => {
 
-    lastDiscordEventAt =
-      Date.now();
+    markDiscordActivity();
 
+    console.error(
+      '🔴🔴🔴 DISCORD DÉCONNECTÉ 🔴🔴🔴'
+    );
 
-    console.warn(
-      '🔴 Shard déconnecté :',
-      id,
+    console.error(
+      'Shard :',
+      id
+    );
+
+    console.error(
       'Code :',
-      event && event.code,
+      event && event.code
+        ? event.code
+        : 'inconnu'
+    );
+
+    console.error(
       'Raison :',
       event && event.reason
         ? event.reason.toString()
         : 'aucune'
     );
 
+    // discord.js tente normalement déjà
+    // de gérer la reconnexion.
+    // Le watchdog prendra le relais si nécessaire.
   }
 );
 
 
 client.on(
   'shardReconnecting',
-  function (id) {
+  id => {
 
-    lastDiscordEventAt =
-      Date.now();
-
+    markDiscordActivity();
 
     console.warn(
-      '🟠 Shard en reconnexion :',
-      id
+      '🟠🟠🟠 DISCORD RECONNEXION 🟠🟠🟠'
     );
 
+    console.warn(
+      'Shard :',
+      id
+    );
   }
 );
 
 
 client.on(
   'shardResume',
-  function (
-    id,
-    replayedEvents
-  ) {
+  (id, replayedEvents) => {
 
     discordReadyAt =
       Date.now();
 
-    lastDiscordEventAt =
-      Date.now();
+    markDiscordActivity();
 
+    reconnectAttempts =
+      0;
 
     console.log(
-      '🟢 Shard reconnecté :',
-      id,
+      '🟢🟢🟢 DISCORD RECONNECTÉ 🟢🟢🟢'
+    );
+
+    console.log(
+      'Shard :',
+      id
+    );
+
+    console.log(
       'Événements rejoués :',
       replayedEvents
     );
-
   }
 );
 
 
 // ============================================================
-// WATCHDOG DISCORD
+// WATCHDOG DISCORD — VERSION CORRIGÉE
 // ============================================================
 
 setInterval(
-  async function () {
+  async () => {
 
     try {
 
       const status =
         client.ws.status;
 
-
       const statusName =
         Object.keys(Status).find(
           key =>
             Status[key] === status
-        ) || `UNKNOWN(${status})`;
+        ) ||
+        `UNKNOWN(${status})`;
 
+      const uptime =
+        Math.floor(
+          process.uptime()
+        );
+
+      const staleFor =
+        lastDiscordActivityAt
+          ? Date.now() -
+            lastDiscordActivityAt
+          : 0;
 
       console.log(
-        `[WATCHDOG] Discord status=${statusName} | ` +
-        `user=${client.user ? client.user.tag : 'non connecté'}`
+        `[WATCHDOG] Discord=${statusName} | ` +
+        `user=${client.user ? client.user.tag : 'non connecté'} | ` +
+        `uptime=${uptime}s | ` +
+        `dernière activité=${Math.floor(staleFor / 1000)}s`
       );
 
 
-      // ------------------------------------------
-      // CAS NORMAL
-      // ------------------------------------------
+      // --------------------------------------------------------
+      // DISCORD READY
+      // --------------------------------------------------------
 
       if (
         status === Status.Ready
       ) {
 
-        lastDiscordEventAt =
-          Date.now();
+        /*
+         * IMPORTANT :
+         *
+         * On NE met surtout PAS
+         * lastDiscordActivityAt = Date.now()
+         * ici.
+         *
+         * Sinon le watchdog croit que Discord
+         * fonctionne alors qu'il ne reçoit plus
+         * réellement d'activité.
+         */
+
+        if (
+          staleFor >=
+          DISCORD_STALE_TIMEOUT
+        ) {
+
+          console.warn(
+            `⚠️ Discord semble silencieux depuis ${Math.floor(staleFor / 1000)} secondes.`
+          );
+
+          await reconnectDiscord(
+            'Watchdog : Discord Ready mais aucune activité récente'
+          );
+        }
 
         return;
-
       }
 
 
-      // ------------------------------------------
-      // CONNEXION EN COURS
-      // ------------------------------------------
+      // --------------------------------------------------------
+      // CONNECTING / RECONNECTING
+      // --------------------------------------------------------
 
       if (
         status === Status.Connecting ||
@@ -2924,22 +2115,20 @@ setInterval(
       ) {
 
         console.warn(
-          `[WATCHDOG] Discord n'est pas encore prêt (${statusName}).`
+          `[WATCHDOG] Discord est actuellement ${statusName}.`
         );
 
         return;
-
       }
 
 
-      // ------------------------------------------
-      // CONNEXION BLOQUÉE
-      // ------------------------------------------
+      // --------------------------------------------------------
+      // AUTRE ÉTAT
+      // --------------------------------------------------------
 
-      const staleFor =
-        Date.now() -
-        lastDiscordEventAt;
-
+      console.error(
+        `⚠️ Discord est dans un état anormal : ${statusName}`
+      );
 
       if (
         staleFor >=
@@ -2947,18 +2136,20 @@ setInterval(
       ) {
 
         await reconnectDiscord(
-          `Watchdog : état Discord ${statusName} depuis trop longtemps.`
+          `Watchdog : état Discord anormal (${statusName})`
         );
-
       }
 
     } catch (error) {
 
       console.error(
-        '[WATCHDOG] Erreur :',
+        '❌ [WATCHDOG] Erreur :',
         error
       );
 
+      await reconnectDiscord(
+        'Watchdog en erreur'
+      );
     }
 
   },
@@ -2972,10 +2163,7 @@ setInterval(
 
 const server =
   http.createServer(
-    async function (
-      req,
-      res
-    ) {
+    async (req, res) => {
 
       const url =
         new URL(
@@ -2984,70 +2172,62 @@ const server =
         );
 
 
-      // ------------------------------------------
+      // --------------------------------------------------------
       // PAGE PRINCIPALE
-      // ------------------------------------------
+      // --------------------------------------------------------
 
       if (
         url.pathname === '/'
       ) {
 
-        res.writeHead(
-          200,
-          {
+        const online =
+          client.ws.status ===
+          Status.Ready;
 
+        res.writeHead(
+          online ? 200 : 503,
+          {
             'Content-Type':
               'text/plain; charset=utf-8'
-
           }
         );
 
-
         res.end(
-          client.ws.status === Status.Ready
+          online
             ? 'Nexus is online'
             : 'Nexus Discord connection unavailable'
         );
 
-
         return;
-
       }
 
 
-      // ------------------------------------------
+      // --------------------------------------------------------
       // HEALTH CHECK
-      // ------------------------------------------
+      // --------------------------------------------------------
 
       if (
-        url.pathname === '/health'
+        url.pathname ===
+        '/health'
       ) {
 
         const discordStatus =
           client.ws.status;
 
-
         const healthy =
           discordStatus ===
           Status.Ready;
 
-
         res.writeHead(
-          healthy
-            ? 200
-            : 503,
+          healthy ? 200 : 503,
           {
-
             'Content-Type':
               'application/json; charset=utf-8'
-
           }
         );
 
-
         res.end(
           JSON.stringify({
-
             status:
               healthy
                 ? 'online'
@@ -3069,21 +2249,32 @@ const server =
             uptime:
               process.uptime(),
 
+            discordReadyAt:
+              discordReadyAt
+                ? new Date(
+                    discordReadyAt
+                  ).toISOString()
+                : null,
+
+            lastDiscordActivityAt:
+              lastDiscordActivityAt
+                ? new Date(
+                    lastDiscordActivityAt
+                  ).toISOString()
+                : null,
+
             timestamp:
               new Date().toISOString()
-
           })
         );
 
-
         return;
-
       }
 
 
-      // ------------------------------------------
+      // --------------------------------------------------------
       // OAUTH TWITCH
-      // ------------------------------------------
+      // --------------------------------------------------------
 
       if (
         url.pathname ===
@@ -3095,60 +2286,46 @@ const server =
             'code'
           );
 
-
         const error =
           url.searchParams.get(
             'error'
           );
-
 
         if (error) {
 
           res.writeHead(
             200,
             {
-
               'Content-Type':
                 'text/html; charset=utf-8'
-
             }
           );
-
 
           res.end(
             '<h1>Autorisation Twitch refusée</h1>' +
             '<p>Tu peux fermer cette page.</p>'
           );
 
-
           return;
-
         }
-
 
         if (!code) {
 
           res.writeHead(
             400,
             {
-
               'Content-Type':
                 'text/html; charset=utf-8'
-
             }
           );
-
 
           res.end(
             '<h1>Erreur OAuth Twitch</h1>' +
             '<p>Aucun code reçu.</p>'
           );
 
-
           return;
-
         }
-
 
         try {
 
@@ -3156,20 +2333,15 @@ const server =
             await fetch(
               'https://id.twitch.tv/oauth2/token',
               {
-
-                method:
-                  'POST',
+                method: 'POST',
 
                 headers: {
-
                   'Content-Type':
                     'application/x-www-form-urlencoded'
-
                 },
 
                 body:
                   new URLSearchParams({
-
                     client_id:
                       TWITCH_CLIENT_ID,
 
@@ -3183,49 +2355,37 @@ const server =
 
                     redirect_uri:
                       TWITCH_REDIRECT_URI
-
                   })
-
               }
             );
-
 
           const data =
             await response.json();
 
-
           if (!response.ok) {
 
             console.error(
-              'Erreur OAuth Twitch :',
+              '❌ Erreur OAuth Twitch :',
               data
             );
-
 
             res.writeHead(
               500,
               {
-
                 'Content-Type':
                   'text/html; charset=utf-8'
-
               }
             );
-
 
             res.end(
               '<h1>Erreur Twitch</h1>'
             );
 
-
             return;
-
           }
-
 
           process.env.TWITCH_ACCESS_TOKEN =
             data.access_token;
-
 
           if (
             data.refresh_token
@@ -3233,25 +2393,19 @@ const server =
 
             process.env.TWITCH_REFRESH_TOKEN =
               data.refresh_token;
-
           }
 
-
           console.log(
-            'OAuth Twitch terminé avec succès.'
+            '✅ OAuth Twitch terminé avec succès.'
           );
-
 
           res.writeHead(
             200,
             {
-
               'Content-Type':
                 'text/html; charset=utf-8'
-
             }
           );
-
 
           res.end(
             '<h1>Connexion Twitch réussie !</h1>' +
@@ -3259,57 +2413,45 @@ const server =
             '<p>Tu peux fermer cette page.</p>'
           );
 
-
         } catch (error) {
 
           console.error(
-            'Erreur OAuth :',
+            '❌ Erreur OAuth :',
             error.message
           );
-
 
           res.writeHead(
             500,
             {
-
               'Content-Type':
                 'text/html; charset=utf-8'
-
             }
           );
-
 
           res.end(
             '<h1>Erreur</h1>'
           );
-
         }
 
-
         return;
-
       }
 
 
-      // ------------------------------------------
+      // --------------------------------------------------------
       // 404
-      // ------------------------------------------
+      // --------------------------------------------------------
 
       res.writeHead(
         404,
         {
-
           'Content-Type':
             'text/plain; charset=utf-8'
-
         }
       );
-
 
       res.end(
         'Not found'
       );
-
     }
   );
 
@@ -3320,13 +2462,12 @@ const server =
 
 server.listen(
   PORT,
-  function () {
+  () => {
 
     console.log(
-      'Serveur HTTP actif sur le port ' +
+      '🌐 Serveur HTTP actif sur le port ' +
       PORT
     );
-
   }
 );
 
@@ -3341,34 +2482,26 @@ async function initializeTwitch() {
     'Initialisation Twitch...'
   );
 
-
   const tokenReady =
     await refreshTwitchToken();
-
 
   if (!tokenReady) {
 
     console.error(
-      'Impossible d’initialiser Twitch.'
+      '❌ Impossible d’initialiser Twitch.'
     );
 
     return;
-
   }
-
 
   const userId =
     await getTwitchUserId(
       TWITCH_USERNAME
     );
 
-
   if (!userId) {
-
     return;
-
   }
-
 
   console.log(
     'ID Twitch de ' +
@@ -3377,11 +2510,9 @@ async function initializeTwitch() {
     userId
   );
 
-
   connectTwitchEventSub(
     userId
   );
-
 }
 
 
@@ -3436,32 +2567,29 @@ if (!DISCORD_TOKEN) {
     'Avant login Discord'
   );
 
+  markDiscordActivity();
 
   client.login(
     DISCORD_TOKEN
   )
-
-  .then(
-    function () {
+    .then(() => {
 
       console.log(
-        'Login Discord envoyé'
+        '✅ Login Discord envoyé.'
       );
 
-    }
-  )
-
-  .catch(
-    function (error) {
+    })
+    .catch(error => {
 
       console.error(
-        'Erreur login Discord :',
+        '❌ Erreur login Discord :',
         error
       );
 
-    }
-  );
-
+      reconnectDiscord(
+        'Échec initial du login Discord'
+      );
+    });
 }
 
 
@@ -3477,7 +2605,7 @@ initializeTwitch();
 // ============================================================
 
 setInterval(
-  function () {
+  () => {
 
     console.log(
       `[PROCESS] Nexus actif depuis ${Math.floor(process.uptime())} secondes.`
@@ -3489,30 +2617,125 @@ setInterval(
 
 
 // ============================================================
+// NETTOYAGE MÉMOIRE
+// ============================================================
+
+setInterval(
+  () => {
+
+    const now =
+      Date.now();
+
+    for (
+      const [userId, data]
+      of detectionTracker.entries()
+    ) {
+
+      data.general =
+        data.general.filter(
+          timestamp =>
+            now - timestamp <
+            DETECTION_WINDOW
+        );
+
+      data.sensitive =
+        data.sensitive.filter(
+          timestamp =>
+            now - timestamp <
+            DETECTION_WINDOW
+        );
+
+      if (
+        data.general.length === 0 &&
+        data.sensitive.length === 0
+      ) {
+
+        detectionTracker.delete(
+          userId
+        );
+      }
+    }
+
+  },
+  5 * 60 * 1000
+);
+
+
+// ============================================================
 // ERREURS PROCESSUS
 // ============================================================
 
 process.on(
   'unhandledRejection',
-  function (error) {
+  error => {
 
     console.error(
       '🔴 UNHANDLED REJECTION :',
       error
     );
-
   }
 );
 
 
 process.on(
   'uncaughtException',
-  function (error) {
+  error => {
 
     console.error(
       '🔴 UNCAUGHT EXCEPTION :',
       error
     );
+  }
+);
 
+
+// ============================================================
+// SIGTERM / SIGINT
+// ============================================================
+
+process.on(
+  'SIGTERM',
+  () => {
+
+    console.warn(
+      '🟠 SIGTERM reçu. Arrêt du processus.'
+    );
+
+    try {
+      client.destroy();
+    } catch {}
+
+    server.close(
+      () => process.exit(0)
+    );
+
+    setTimeout(
+      () => process.exit(0),
+      5000
+    );
+  }
+);
+
+
+process.on(
+  'SIGINT',
+  () => {
+
+    console.warn(
+      '🟠 SIGINT reçu. Arrêt du processus.'
+    );
+
+    try {
+      client.destroy();
+    } catch {}
+
+    server.close(
+      () => process.exit(0)
+    );
+
+    setTimeout(
+      () => process.exit(0),
+      5000
+    );
   }
 );

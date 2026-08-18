@@ -50,19 +50,10 @@ const DETECTION_WINDOW = 60 * 1000;
 const SANCTION_COOLDOWN = 5 * 60 * 1000;
 
 const GENERAL_INSULTS = [
-  'connard',
-  'connasse',
-  'con',
-  'conne',
   'pute',
   'salope',
   'encule',
   'enculé',
-  'fdp',
-  'tg',
-  'ntm',
-  'merde',
-  'putain'
 ];
 
 const SENSITIVE_PATTERNS = [];

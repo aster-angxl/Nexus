@@ -13,7 +13,8 @@ const {
   SlashCommandBuilder,
   REST,
   Routes,
-  PermissionFlagsBits
+  PermissionFlagsBits,
+  Status
 } = require('discord.js');
 
 
@@ -23,6 +24,12 @@ const {
 
 const PORT =
   process.env.PORT || 3000;
+
+const DISCORD_TOKEN =
+  process.env.DISCORD_TOKEN;
+
+const DISCORD_CLIENT_ID =
+  process.env.DISCORD_CLIENT_ID;
 
 const TWITCH_CLIENT_ID =
   process.env.TWITCH_CLIENT_ID;
@@ -80,21 +87,12 @@ const GENERAL_INSULTS = [
 
 
 // ------------------------------------------------------------
-// TERMES À SURVEILLER PARTICULIÈREMENT
-// ------------------------------------------------------------
-//
-// Cette liste reste volontairement vide ici.
-// Tu pourras ajouter les termes que TU veux
-// surveiller selon les règles de ton serveur.
-//
-// Nexus ne sanctionnera jamais automatiquement.
-// Il créera seulement une demande.
+// TERMES SENSIBLES
 // ------------------------------------------------------------
 
 const SENSITIVE_PATTERNS = [
 
-  // Ajoute ici les termes à surveiller
-  // selon les règles de ton serveur.
+  // À compléter selon les règles du serveur.
 
 ];
 
@@ -103,21 +101,40 @@ const SENSITIVE_PATTERNS = [
 // MÉMOIRE
 // ============================================================
 
-// Twitch
 let lastAnnouncedStreamId = null;
 
-
-// Auto-modération
 const detectionTracker =
   new Map();
 
 const sanctionCooldowns =
   new Map();
 
-
-// Demandes de sanctions
 const sanctionRequests =
   new Map();
+
+
+// ============================================================
+// ÉTAT CONNEXION DISCORD
+// ============================================================
+
+let discordReadyAt = null;
+
+let lastDiscordEventAt = Date.now();
+
+let reconnectingDiscord = false;
+
+let reconnectAttempts = 0;
+
+let lastReconnectAt = 0;
+
+const RECONNECT_COOLDOWN =
+  30 * 1000;
+
+const DISCORD_WATCHDOG_INTERVAL =
+  30 * 1000;
+
+const DISCORD_STALE_TIMEOUT =
+  2 * 60 * 1000;
 
 
 // ============================================================
@@ -205,18 +222,15 @@ function containsWord(
 
 
 // ============================================================
-// DÉTECTION AUTO-MOD
+// AUTO-MODÉRATION
 // ============================================================
 
 function detectModeration(
   content
 ) {
 
-  let general =
-    false;
-
-  let sensitive =
-    false;
+  let general = false;
+  let sensitive = false;
 
 
   for (
@@ -262,10 +276,8 @@ function detectModeration(
 
 
   return {
-
     general,
     sensitive
-
   };
 
 }
@@ -294,7 +306,6 @@ function registerDetection(
     data = {
 
       general: [],
-
       sensitive: []
 
     };
@@ -435,8 +446,6 @@ async function refreshTwitchToken() {
     );
 
 
-    // Twitch peut fournir un nouveau refresh token.
-    // Il devra ensuite être sauvegardé dans Render.
     if (
       data.refresh_token
     ) {
@@ -1002,10 +1011,6 @@ function connectTwitchEventSub(
         );
 
 
-        // ----------------------------------
-        // WELCOME
-        // ----------------------------------
-
         if (
           messageType ===
           'session_welcome'
@@ -1030,10 +1035,6 @@ function connectTwitchEventSub(
 
         }
 
-
-        // ----------------------------------
-        // NOTIFICATION
-        // ----------------------------------
 
         if (
           messageType ===
@@ -1064,7 +1065,6 @@ function connectTwitchEventSub(
             );
 
 
-            // Anti-doublon
             if (
               lastAnnouncedStreamId ===
               streamId
@@ -1123,10 +1123,6 @@ function connectTwitchEventSub(
 
         }
 
-
-        // ----------------------------------
-        // RECONNECT
-        // ----------------------------------
 
         if (
           messageType ===
@@ -1457,7 +1453,7 @@ async function createSanctionRequest({
 
 
 // ============================================================
-// PERMISSIONS MODÉRATEUR
+// PERMISSIONS
 // ============================================================
 
 function canModerate(
@@ -1561,10 +1557,6 @@ async function handleSanctionVote(
     interaction.user.id;
 
 
-  // ----------------------------------------
-  // ADMIN
-  // ----------------------------------------
-
   if (
     isAdmin(interaction)
   ) {
@@ -1599,10 +1591,6 @@ async function handleSanctionVote(
   }
 
 
-  // ----------------------------------------
-  // EMPÊCHER DOUBLE VOTE
-  // ----------------------------------------
-
   if (
     request.yesVotes.has(
       voterId
@@ -1627,10 +1615,6 @@ async function handleSanctionVote(
   }
 
 
-  // ----------------------------------------
-  // ENREGISTRER LE VOTE
-  // ----------------------------------------
-
   if (
     vote === 'yes'
   ) {
@@ -1639,8 +1623,7 @@ async function handleSanctionVote(
       voterId
     );
 
-  }
-  else {
+  } else {
 
     request.noVotes.add(
       voterId
@@ -1648,10 +1631,6 @@ async function handleSanctionVote(
 
   }
 
-
-  // ----------------------------------------
-  // 3 POUR
-  // ----------------------------------------
 
   if (
     request.yesVotes.size >= 3
@@ -1682,10 +1661,6 @@ async function handleSanctionVote(
 
   }
 
-
-  // ----------------------------------------
-  // MISE À JOUR DU MESSAGE
-  // ----------------------------------------
 
   await updateSanctionMessage(
     request
@@ -1834,19 +1809,12 @@ async function finalizeSanctionRequest(
     });
 
 
-    // ----------------------------------------
-    // IMPORTANT
-    // ----------------------------------------
-    //
-    // Pour le moment, aucune vraie sanction
-    // Discord n'est appliquée.
-    //
-    // On teste d'abord tout le système.
-    //
     console.log(
+
       approved
         ? 'Demande validée — sanction NON appliquée pour le moment.'
         : 'Demande refusée.'
+
     );
 
 
@@ -1863,7 +1831,7 @@ async function finalizeSanctionRequest(
 
 
 // ============================================================
-// MODIFIER LA SANCTION
+// MODIFIER SANCTION
 // ============================================================
 
 async function handleModifySanction(
@@ -1928,7 +1896,7 @@ async function handleModifySanction(
 
 
 // ============================================================
-// METTRE À JOUR UNE DEMANDE
+// MISE À JOUR DEMANDE
 // ============================================================
 
 async function updateSanctionMessage(
@@ -2003,10 +1971,6 @@ client.on(
 
     try {
 
-      // ======================================
-      // SLASH COMMAND
-      // ======================================
-
       if (
         interaction.isChatInputCommand()
       ) {
@@ -2076,10 +2040,6 @@ client.on(
         }
 
 
-        // ----------------------------------
-        // PROTECTION CONTRE SOI-MÊME
-        // ----------------------------------
-
         if (
           target.id ===
           interaction.user.id
@@ -2109,10 +2069,6 @@ client.on(
             target.id
           );
 
-
-        // ----------------------------------
-        // PROTECTION CONTRE UN ADMIN
-        // ----------------------------------
 
         if (
           member.permissions.has(
@@ -2187,10 +2143,6 @@ client.on(
       }
 
 
-      // ======================================
-      // BOUTONS
-      // ======================================
-
       if (
         interaction.isButton()
       ) {
@@ -2203,6 +2155,7 @@ client.on(
 
         const action =
           parts[1];
+
 
         const requestId =
           parts
@@ -2359,10 +2312,6 @@ client.on(
     );
 
 
-    // ----------------------------------------
-    // CONTENU SENSIBLE
-    // ----------------------------------------
-
     if (
       detected.sensitive
     ) {
@@ -2395,10 +2344,6 @@ client.on(
     }
 
 
-    // ----------------------------------------
-    // INSULTES RÉPÉTÉES
-    // ----------------------------------------
-
     if (
       generalCount >=
       GENERAL_INSULT_THRESHOLD
@@ -2417,7 +2362,7 @@ client.on(
       if (
         lastRequest &&
         now - lastRequest <
-          SANCTION_COOLDOWN
+        SANCTION_COOLDOWN
       ) {
 
         return;
@@ -2513,43 +2458,31 @@ const sanctionCommand =
           .addChoices(
 
             {
-
               name:
                 'Avertissement',
-
               value:
                 'Avertissement'
-
             },
 
             {
-
               name:
                 'Timeout',
-
               value:
                 'Timeout'
-
             },
 
             {
-
               name:
                 'Kick',
-
               value:
                 'Kick'
-
             },
 
             {
-
               name:
                 'Ban',
-
               value:
                 'Ban'
-
             }
 
           )
@@ -2577,38 +2510,38 @@ const sanctionCommand =
 
 
 // ============================================================
-// ENREGISTREMENT SLASH COMMAND
+// ENREGISTREMENT COMMANDES
 // ============================================================
 
 async function registerCommands() {
 
+  if (!DISCORD_TOKEN) {
+
+    console.error(
+      '❌ DISCORD_TOKEN absent.'
+    );
+
+    return false;
+
+  }
+
+
+  if (!DISCORD_CLIENT_ID) {
+
+    console.error(
+      '❌ DISCORD_CLIENT_ID absent.'
+    );
+
+    console.error(
+      '⚠️ Les commandes slash ne peuvent pas être enregistrées.'
+    );
+
+    return false;
+
+  }
+
+
   try {
-
-    if (
-      !process.env.DISCORD_TOKEN
-    ) {
-
-      console.error(
-        'DISCORD_TOKEN absent.'
-      );
-
-      return;
-
-    }
-
-
-    if (
-      !process.env.DISCORD_CLIENT_ID
-    ) {
-
-      console.error(
-        'DISCORD_CLIENT_ID absent.'
-      );
-
-      return;
-
-    }
-
 
     const rest =
       new REST({
@@ -2617,14 +2550,14 @@ async function registerCommands() {
           '10'
 
       }).setToken(
-        process.env.DISCORD_TOKEN
+        DISCORD_TOKEN
       );
 
 
     await rest.put(
 
       Routes.applicationCommands(
-        process.env.DISCORD_CLIENT_ID
+        DISCORD_CLIENT_ID
       ),
 
       {
@@ -2641,16 +2574,124 @@ async function registerCommands() {
 
 
     console.log(
-      'Commande /sanction enregistrée.'
+      '✅ Commande /sanction enregistrée.'
+    );
+
+
+    return true;
+
+
+  } catch (error) {
+
+    console.error(
+      '❌ Erreur enregistrement commandes :',
+      error
+    );
+
+    return false;
+
+  }
+
+}
+
+
+// ============================================================
+// CONNEXION DISCORD
+// ============================================================
+
+async function reconnectDiscord(
+  reason = 'raison inconnue'
+) {
+
+  if (
+    reconnectingDiscord
+  ) {
+
+    console.log(
+      '🔄 Reconnexion déjà en cours, aucune nouvelle reconnexion lancée.'
+    );
+
+    return;
+
+  }
+
+
+  const now =
+    Date.now();
+
+
+  if (
+    now - lastReconnectAt <
+    RECONNECT_COOLDOWN
+  ) {
+
+    console.log(
+      '⏳ Reconnexion ignorée : cooldown actif.'
+    );
+
+    return;
+
+  }
+
+
+  reconnectingDiscord = true;
+
+  lastReconnectAt = now;
+
+  reconnectAttempts++;
+
+
+  console.warn(
+    `🔄 Tentative de reconnexion Discord #${reconnectAttempts} — ${reason}`
+  );
+
+
+  try {
+
+    try {
+
+      client.destroy();
+
+    } catch (error) {
+
+      console.error(
+        'Erreur pendant destroy() :',
+        error.message
+      );
+
+    }
+
+
+    await new Promise(
+      resolve =>
+        setTimeout(
+          resolve,
+          3000
+        )
+    );
+
+
+    await client.login(
+      DISCORD_TOKEN
+    );
+
+
+    console.log(
+      '🟢 Reconnexion Discord demandée avec succès.'
     );
 
 
   } catch (error) {
 
     console.error(
-      'Erreur enregistrement commandes :',
+      '🔴 Échec reconnexion Discord :',
       error
     );
+
+
+  } finally {
+
+    reconnectingDiscord = false;
 
   }
 
@@ -2665,14 +2706,24 @@ client.once(
   'ready',
   async function () {
 
+    discordReadyAt =
+      Date.now();
+
+    lastDiscordEventAt =
+      Date.now();
+
+    reconnectAttempts =
+      0;
+
+
     console.log(
-      'Nexus est connecté en tant que ' +
+      '🟢 Nexus est connecté en tant que ' +
       client.user.tag
     );
 
 
     console.log(
-      'Aucun statut personnalisé configuré.'
+      'Discord Gateway : READY'
     );
 
 
@@ -2683,15 +2734,19 @@ client.once(
 
 
 // ============================================================
-// ERREURS DISCORD
+// ÉVÉNEMENTS DISCORD
 // ============================================================
 
 client.on(
   'error',
   function (error) {
 
+    lastDiscordEventAt =
+      Date.now();
+
+
     console.error(
-      'Erreur Discord :',
+      '🔴 Erreur Discord :',
       error
     );
 
@@ -2712,13 +2767,13 @@ client.on(
 );
 
 
-// ============================================================
-// DEBUG DISCORD
-// ============================================================
-
 client.on(
   'debug',
   function (message) {
+
+    lastDiscordEventAt =
+      Date.now();
+
 
     console.log(
       '[DEBUG]',
@@ -2729,16 +2784,19 @@ client.on(
 );
 
 
-// ============================================================
-// SHARD
-// ============================================================
-
 client.on(
   'shardReady',
   function (id) {
 
+    discordReadyAt =
+      Date.now();
+
+    lastDiscordEventAt =
+      Date.now();
+
+
     console.log(
-      'Shard prêt :',
+      '🟢 Shard prêt :',
       id
     );
 
@@ -2753,10 +2811,19 @@ client.on(
     id
   ) {
 
-    console.log(
-      'Shard déconnecté :',
+    lastDiscordEventAt =
+      Date.now();
+
+
+    console.warn(
+      '🔴 Shard déconnecté :',
       id,
-      event
+      'Code :',
+      event && event.code,
+      'Raison :',
+      event && event.reason
+        ? event.reason.toString()
+        : 'aucune'
     );
 
   }
@@ -2767,8 +2834,12 @@ client.on(
   'shardReconnecting',
   function (id) {
 
-    console.log(
-      'Shard en reconnexion :',
+    lastDiscordEventAt =
+      Date.now();
+
+
+    console.warn(
+      '🟠 Shard en reconnexion :',
       id
     );
 
@@ -2783,14 +2854,115 @@ client.on(
     replayedEvents
   ) {
 
+    discordReadyAt =
+      Date.now();
+
+    lastDiscordEventAt =
+      Date.now();
+
+
     console.log(
-      'Shard reconnecté :',
+      '🟢 Shard reconnecté :',
       id,
       'Événements rejoués :',
       replayedEvents
     );
 
   }
+);
+
+
+// ============================================================
+// WATCHDOG DISCORD
+// ============================================================
+
+setInterval(
+  async function () {
+
+    try {
+
+      const status =
+        client.ws.status;
+
+
+      const statusName =
+        Object.keys(Status).find(
+          key =>
+            Status[key] === status
+        ) || `UNKNOWN(${status})`;
+
+
+      console.log(
+        `[WATCHDOG] Discord status=${statusName} | ` +
+        `user=${client.user ? client.user.tag : 'non connecté'}`
+      );
+
+
+      // ------------------------------------------
+      // CAS NORMAL
+      // ------------------------------------------
+
+      if (
+        status === Status.Ready
+      ) {
+
+        lastDiscordEventAt =
+          Date.now();
+
+        return;
+
+      }
+
+
+      // ------------------------------------------
+      // CONNEXION EN COURS
+      // ------------------------------------------
+
+      if (
+        status === Status.Connecting ||
+        status === Status.Reconnecting
+      ) {
+
+        console.warn(
+          `[WATCHDOG] Discord n'est pas encore prêt (${statusName}).`
+        );
+
+        return;
+
+      }
+
+
+      // ------------------------------------------
+      // CONNEXION BLOQUÉE
+      // ------------------------------------------
+
+      const staleFor =
+        Date.now() -
+        lastDiscordEventAt;
+
+
+      if (
+        staleFor >=
+        DISCORD_STALE_TIMEOUT
+      ) {
+
+        await reconnectDiscord(
+          `Watchdog : état Discord ${statusName} depuis trop longtemps.`
+        );
+
+      }
+
+    } catch (error) {
+
+      console.error(
+        '[WATCHDOG] Erreur :',
+        error
+      );
+
+    }
+
+  },
+  DISCORD_WATCHDOG_INTERVAL
 );
 
 
@@ -2812,9 +2984,9 @@ const server =
         );
 
 
-      // ----------------------------------
+      // ------------------------------------------
       // PAGE PRINCIPALE
-      // ----------------------------------
+      // ------------------------------------------
 
       if (
         url.pathname === '/'
@@ -2832,7 +3004,9 @@ const server =
 
 
         res.end(
-          'Nexus is online'
+          client.ws.status === Status.Ready
+            ? 'Nexus is online'
+            : 'Nexus Discord connection unavailable'
         );
 
 
@@ -2841,9 +3015,75 @@ const server =
       }
 
 
-      // ----------------------------------
+      // ------------------------------------------
+      // HEALTH CHECK
+      // ------------------------------------------
+
+      if (
+        url.pathname === '/health'
+      ) {
+
+        const discordStatus =
+          client.ws.status;
+
+
+        const healthy =
+          discordStatus ===
+          Status.Ready;
+
+
+        res.writeHead(
+          healthy
+            ? 200
+            : 503,
+          {
+
+            'Content-Type':
+              'application/json; charset=utf-8'
+
+          }
+        );
+
+
+        res.end(
+          JSON.stringify({
+
+            status:
+              healthy
+                ? 'online'
+                : 'degraded',
+
+            discord:
+              Object.keys(Status).find(
+                key =>
+                  Status[key] ===
+                  discordStatus
+              ) ||
+              `UNKNOWN(${discordStatus})`,
+
+            user:
+              client.user
+                ? client.user.tag
+                : null,
+
+            uptime:
+              process.uptime(),
+
+            timestamp:
+              new Date().toISOString()
+
+          })
+        );
+
+
+        return;
+
+      }
+
+
+      // ------------------------------------------
       // OAUTH TWITCH
-      // ----------------------------------
+      // ------------------------------------------
 
       if (
         url.pathname ===
@@ -3051,9 +3291,9 @@ const server =
       }
 
 
-      // ----------------------------------
+      // ------------------------------------------
       // 404
-      // ----------------------------------
+      // ------------------------------------------
 
       res.writeHead(
         404,
@@ -3133,7 +3373,7 @@ async function initializeTwitch() {
   console.log(
     'ID Twitch de ' +
     TWITCH_USERNAME +
-    ' :',
+    ':',
     userId
   );
 
@@ -3151,12 +3391,12 @@ async function initializeTwitch() {
 
 console.log(
   'Discord Token présent :',
-  !!process.env.DISCORD_TOKEN
+  !!DISCORD_TOKEN
 );
 
 console.log(
   'Discord Client ID présent :',
-  !!process.env.DISCORD_CLIENT_ID
+  !!DISCORD_CLIENT_ID
 );
 
 console.log(
@@ -3184,35 +3424,45 @@ console.log(
 // LOGIN DISCORD
 // ============================================================
 
-console.log(
-  'Avant login Discord'
-);
+if (!DISCORD_TOKEN) {
+
+  console.error(
+    '❌ Aucun DISCORD_TOKEN configuré. Nexus ne peut pas démarrer.'
+  );
+
+} else {
+
+  console.log(
+    'Avant login Discord'
+  );
 
 
-client.login(
-  process.env.DISCORD_TOKEN
-)
+  client.login(
+    DISCORD_TOKEN
+  )
 
-.then(
-  function () {
+  .then(
+    function () {
 
-    console.log(
-      'Login Discord envoyé'
-    );
+      console.log(
+        'Login Discord envoyé'
+      );
 
-  }
-)
+    }
+  )
 
-.catch(
-  function (error) {
+  .catch(
+    function (error) {
 
-    console.error(
-      'Erreur login Discord :',
-      error
-    );
+      console.error(
+        'Erreur login Discord :',
+        error
+      );
 
-  }
-);
+    }
+  );
+
+}
 
 
 // ============================================================
@@ -3223,16 +3473,46 @@ initializeTwitch();
 
 
 // ============================================================
-// HEARTBEAT
+// HEARTBEAT PROCESSUS
 // ============================================================
 
 setInterval(
   function () {
 
     console.log(
-      'Nexus est toujours actif'
+      `[PROCESS] Nexus actif depuis ${Math.floor(process.uptime())} secondes.`
     );
 
   },
   30000
+);
+
+
+// ============================================================
+// ERREURS PROCESSUS
+// ============================================================
+
+process.on(
+  'unhandledRejection',
+  function (error) {
+
+    console.error(
+      '🔴 UNHANDLED REJECTION :',
+      error
+    );
+
+  }
+);
+
+
+process.on(
+  'uncaughtException',
+  function (error) {
+
+    console.error(
+      '🔴 UNCAUGHT EXCEPTION :',
+      error
+    );
+
+  }
 );

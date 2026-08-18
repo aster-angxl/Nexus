@@ -1443,7 +1443,6 @@ async function handleStreamOnline(
 // ============================================================
 // EVENTSUB CHAT
 // ============================================================
-
 async function connectTwitchChatEventSub(
   websocketUrl =
     'wss://eventsub.wss.twitch.tv/ws',
@@ -1461,10 +1460,8 @@ async function connectTwitchChatEventSub(
   if (
     twitchChatSocket &&
     (
-      twitchChatSocket.readyState ===
-        WebSocket.OPEN ||
-      twitchChatSocket.readyState ===
-        WebSocket.CONNECTING
+      twitchChatSocket.readyState === WebSocket.OPEN ||
+      twitchChatSocket.readyState === WebSocket.CONNECTING
     )
   ) {
     return twitchChatSocket;
@@ -1474,224 +1471,243 @@ async function connectTwitchChatEventSub(
     '🔌 Connexion Twitch EventSub Chat...'
   );
 
-  const ws =
-    new WebSocket(
-      websocketUrl
+  const ws = new WebSocket(websocketUrl);
+
+  twitchChatSocket = ws;
+
+  ws.on('open', () => {
+    console.log(
+      '🟢 EventSub Chat WebSocket ouvert.'
     );
+  });
 
-  twitchChatSocket =
-    ws;
+  ws.on('message', async raw => {
+    try {
+      const message =
+        JSON.parse(raw.toString());
 
-  ws.on(
-    'open',
-    () => {
-      console.log(
-        '🟢 EventSub Chat WebSocket ouvert.'
-      );
-    }
-  );
+      const metadata =
+        message.metadata || {};
 
-  ws.on(
-    'message',
-    async raw => {
-      try {
-        const message =
-          JSON.parse(
-            raw.toString()
-          );
+      const type =
+        metadata.message_type;
 
-        const metadata =
-          message.metadata || {};
+      const messageId =
+        metadata.message_id;
 
-        const type =
-          metadata.message_type;
-
-        const messageId =
-          metadata.message_id;
-
-        if (messageId) {
-          if (
-            processedTwitchMessageIds.has(
-              messageId
-            )
-          ) {
-            return;
-          }
-
-          processedTwitchMessageIds.set(
-            messageId,
-            Date.now()
-          );
-        }
-
+      if (messageId) {
         if (
-          type ===
-          'session_welcome'
-        ) {
-          const session =
-            message.payload?.session;
-
-          if (!session) {
-            return;
-          }
-
-          twitchChatSessionId =
-            session.id;
-
-          twitchChatReconnectAttempt =
-            0;
-
-          console.log(
-            `✅ EventSub Chat session : ${session.id}`
-          );
-
-          if (isReconnect) {
-            return;
-          }
-
-          await createEventSubSubscription({
-            token:
-              twitchChatAccessToken,
-
-            sessionId:
-              session.id,
-
-            type:
-              'channel.chat.message',
-
-            version:
-              '1',
-
-            condition: {
-              broadcaster_user_id:
-                twitchUserId,
-
-              user_id:
-                twitchChatUserId
-            }
-          });
-
-          return;
-        }
-
-        if (
-          type ===
-          'session_keepalive'
+          processedTwitchMessageIds.has(
+            messageId
+          )
         ) {
           return;
         }
 
-        if (
-          type ===
-          'session_reconnect'
-        ) {
-          const reconnectUrl =
-            message.payload?.session
-              ?.reconnect_url;
-
-          if (!reconnectUrl) {
-            return;
-          }
-
-          console.warn(
-            '🔄 Twitch demande une reconnexion Chat.'
-          );
-
-          await connectTwitchChatEventSub(
-            reconnectUrl,
-            true
-          );
-
-          return;
-        }
-
-        if (
-          type ===
-          'revocation'
-        ) {
-          console.error(
-            '🔴 EventSub Chat révoqué :',
-            message.payload?.subscription
-          );
-
-          return;
-        }
-
-        if (
-          type !==
-          'notification'
-        ) {
-          return;
-        }
-
-        const subscription =
-          message.payload?.subscription;
-
-        const event =
-          message.payload?.event;
-
-        if (
-          !subscription ||
-          !event
-        ) {
-          return;
-        }
-
-        if (
-          subscription.type !==
-          'channel.chat.message'
-        ) {
-          return;
-        }
-
-        await handleTwitchChatMessage(
-          event
-        );
-
-      } catch (error) {
-        console.error(
-          '❌ EventSub Chat message:',
-          error.message
+        processedTwitchMessageIds.set(
+          messageId,
+          Date.now()
         );
       }
-    }
-  );
 
-  ws.on(
-    'error',
-    error => {
+      if (type === 'session_welcome') {
+        const session =
+          message.payload?.session;
+
+        if (!session) {
+          return;
+        }
+
+        twitchChatSessionId =
+          session.id;
+
+        twitchChatReconnectAttempt = 0;
+
+        console.log(
+          `✅ EventSub Chat session : ${session.id}`
+        );
+
+        if (!isReconnect) {
+          const subscribed =
+            await createEventSubSubscription({
+              token:
+                twitchChatAccessToken,
+
+              sessionId:
+                session.id,
+
+              type:
+                'channel.chat.message',
+
+              version:
+                '1',
+
+              condition: {
+                broadcaster_user_id:
+                  twitchUserId,
+
+                user_id:
+                  twitchChatUserId
+              }
+            });
+
+          if (!subscribed) {
+            console.error(
+              '❌ Impossible d’activer EventSub Chat.'
+            );
+          }
+        }
+
+        return;
+      }
+
+      if (type === 'session_keepalive') {
+        return;
+      }
+
+      if (type === 'session_reconnect') {
+        const reconnectUrl =
+          message.payload?.session?.reconnect_url;
+
+        if (!reconnectUrl) {
+          console.warn(
+            '⚠️ URL de reconnexion Twitch absente.'
+          );
+
+          return;
+        }
+
+        console.warn(
+          '🔄 Twitch demande une reconnexion Chat.'
+        );
+
+        await connectTwitchChatEventSub(
+          reconnectUrl,
+          true
+        );
+
+        return;
+      }
+
+      if (type === 'revocation') {
+        console.error(
+          '🔴 EventSub Chat révoqué :',
+          message.payload?.subscription
+        );
+
+        if (twitchChatSocket === ws) {
+          try {
+            ws.close(
+              1000,
+              'EventSub revocation'
+            );
+          } catch {}
+        }
+
+        return;
+      }
+
+      if (type !== 'notification') {
+        return;
+      }
+
+      const subscription =
+        message.payload?.subscription;
+
+      const event =
+        message.payload?.event;
+
+      if (!subscription || !event) {
+        return;
+      }
+
+      if (
+        subscription.type !==
+        'channel.chat.message'
+      ) {
+        return;
+      }
+
+      await handleTwitchChatMessage(event);
+
+    } catch (error) {
       console.error(
-        '🔴 EventSub Chat WebSocket:',
+        '❌ EventSub Chat message:',
         error.message
       );
     }
-  );
+  });
 
-  ws.on(
-    'close',
-    (code, reason) => {
-      if (
-        twitchChatSocket ===
-        ws
-      ) {
-        twitchChatSocket =
-          null;
+  ws.on('error', error => {
+    console.error(
+      '🔴 EventSub Chat WebSocket:',
+      error.message
+    );
+  });
 
-        twitchChatSessionId =
-          null;
-      }
+  ws.on('close', async (code, reason) => {
+    if (twitchChatSocket === ws) {
+      twitchChatSocket = null;
+      twitchChatSessionId = null;
+    }
 
+    console.warn(
+      `🟠 EventSub Chat fermé. Code=${code} Reason=${
+        reason?.toString() || 'aucune'
+      }`
+    );
+
+    if (shuttingDown) {
+      return;
+    }
+
+    let validation = null;
+
+    if (twitchChatAccessToken) {
+      validation =
+        await validateTwitchToken(
+          twitchChatAccessToken
+        );
+    }
+
+    if (
+      !validation &&
+      twitchChatRefreshToken
+    ) {
       console.warn(
-        `🟠 EventSub Chat fermé. Code=${code} Reason=${
-          reason?.toString() || 'aucune'
-        }`
+        '🔄 Token Twitch Chat invalide. Refresh...'
       );
 
-      if (!shuttingDown) {
-        scheduleChatReconnect();
+      const refreshed =
+        await refreshTwitchChatToken();
+
+      if (refreshed) {
+        validation =
+          await validateTwitchToken(
+            twitchChatAccessToken
+          );
+
+        if (validation?.user_id) {
+          twitchChatUserId =
+            validation.user_id;
+
+          twitchChatUser =
+            await getTwitchUserById(
+              twitchChatUserId,
+              twitchChatAccessToken
+            );
+
+          twitchChatReconnectAttempt = 0;
+
+          console.log(
+            '✅ Token Twitch Chat renouvelé et validé.'
+          );
+        }
       }
     }
-  );
+
+    scheduleChatReconnect();
+  });
 
   return ws;
 }

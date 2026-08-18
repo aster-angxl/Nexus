@@ -17,25 +17,17 @@ const {
   Status
 } = require('discord.js');
 
-
 // ============================================================
 // CONFIGURATION
 // ============================================================
 
-const PORT =
-  Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3000);
 
-const DISCORD_TOKEN =
-  process.env.DISCORD_TOKEN;
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
 
-const DISCORD_CLIENT_ID =
-  process.env.DISCORD_CLIENT_ID;
-
-const TWITCH_CLIENT_ID =
-  process.env.TWITCH_CLIENT_ID;
-
-const TWITCH_CLIENT_SECRET =
-  process.env.TWITCH_CLIENT_SECRET;
+const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
+const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET;
 
 const TWITCH_REDIRECT_URI =
   process.env.TWITCH_REDIRECT_URI ||
@@ -45,8 +37,7 @@ const TWITCH_USERNAME =
   process.env.TWITCH_USERNAME ||
   'aster_angxl';
 
-const DISCORD_INVITE =
-  process.env.DISCORD_INVITE;
+const DISCORD_INVITE = process.env.DISCORD_INVITE;
 
 const STREAM_CHANNEL_ID =
   process.env.STREAM_CHANNEL_ID ||
@@ -56,18 +47,13 @@ const SANCTION_CHANNEL_ID =
   process.env.SANCTION_CHANNEL_ID ||
   '1538498193728475197';
 
-
 // ============================================================
 // AUTO-MODÉRATION
 // ============================================================
 
 const GENERAL_INSULT_THRESHOLD = 3;
-
-const DETECTION_WINDOW =
-  60 * 1000;
-
-const SANCTION_COOLDOWN =
-  5 * 60 * 1000;
+const DETECTION_WINDOW = 60 * 1000;
+const SANCTION_COOLDOWN = 5 * 60 * 1000;
 
 const GENERAL_INSULTS = [
   'pute',
@@ -100,20 +86,7 @@ const GENERAL_INSULTS = [
   'ta gueule'
 ];
 
-
-/*
- * Liste séparée pour les propos discriminatoires.
- *
- * IMPORTANT :
- * On détecte ici les insultes/propos directement utilisés
- * comme attaque discriminatoire.
- *
- * Le système doit idéalement être amélioré avec une analyse
- * de contexte avant une sanction automatique définitive.
- */
-
 const SENSITIVE_PATTERNS = [
-  // Homophobie
   'pédé',
   'pede',
   'pédale',
@@ -121,84 +94,56 @@ const SENSITIVE_PATTERNS = [
   'tapette',
   'sale gay',
   'sale lesbienne',
-
-  // Racisme
   'sale noir',
   'sale arabe',
   'sale asiat',
   'sale blanc',
-
-  // Grossophobie
   'gros porc',
   'grosse vache',
   'gros tas',
-
-  // Insultes discriminatoires courantes
   'mongol',
   'mongole',
   'trisomique'
 ];
-
 
 // ============================================================
 // ÉTAT GLOBAL
 // ============================================================
 
 let shuttingDown = false;
-
 let shutdownStarted = false;
-
 let discordReadyAt = null;
-
 let lastAnnouncedStreamId = null;
-
 let twitchUserId = null;
-
 
 // ============================================================
 // TWITCH EVENTSUB
 // ============================================================
 
 let twitchEventSubSocket = null;
-
 let twitchEventSubSessionId = null;
-
-let twitchEventSubConnecting = false;
-
 let twitchReconnectTimer = null;
-
 let twitchReconnectAttempt = 0;
-
 
 // ============================================================
 // TWITCH CHAT
 // ============================================================
 
 let twitchChatSocket = null;
-
-let twitchChatConnecting = false;
-
 let twitchChatReconnectTimer = null;
-
 let twitchChatReconnectAttempt = 0;
-
+let twitchChatAuthenticated = false;
 
 // ============================================================
 // MÉMOIRE
 // ============================================================
 
-const detectionTracker =
-  new Map();
-
-const sanctionCooldowns =
-  new Map();
-
-const sanctionRequests =
-  new Map();
-
+const detectionTracker = new Map();
+const sanctionCooldowns = new Map();
+const sanctionRequests = new Map();
 
 // ============================================================
-// CLIENT DISCORD
+// DISCORD
 // ============================================================
 
 const client = new Client({
@@ -210,73 +155,54 @@ const client = new Client({
   ]
 });
 
-
 // ============================================================
 // OUTILS
 // ============================================================
 
 function sleep(ms) {
-  return new Promise(
-    resolve => setTimeout(resolve, ms)
-  );
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-
 function getDiscordStatusName(status) {
-  const entry =
-    Object.entries(Status).find(
-      ([, value]) =>
-        value === status
-    );
+  const entry = Object.entries(Status).find(
+    ([, value]) => value === status
+  );
 
   return entry
     ? entry[0]
     : `UNKNOWN(${status})`;
 }
 
-
 function normalizeText(text) {
   return String(text || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(
-      /[_\-.,!?;:/\\()[\]{}"'`]+/g,
-      ' '
-    )
+    .replace(/[_\-.,!?;:/\\()[\]{}"'`]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
 
-
 function containsWord(content, word) {
-  const normalizedContent =
-    normalizeText(content);
-
-  const normalizedWord =
-    normalizeText(word);
+  const normalizedContent = normalizeText(content);
+  const normalizedWord = normalizeText(word);
 
   if (!normalizedWord) {
     return false;
   }
 
-  const escaped =
-    normalizedWord.replace(
-      /[.*+?^${}()|[\]\\]/g,
-      '\\$&'
-    );
-
-  const regex =
-    new RegExp(
-      `(^|\\s)${escaped}(?=\\s|$)`,
-      'i'
-    );
-
-  return regex.test(
-    normalizedContent
+  const escaped = normalizedWord.replace(
+    /[.*+?^${}()|[\]\\]/g,
+    '\\$&'
   );
-}
 
+  const regex = new RegExp(
+    `(^|\\s)${escaped}(?=\\s|$)`,
+    'i'
+  );
+
+  return regex.test(normalizedContent);
+}
 
 // ============================================================
 // AUTO-MODÉRATION
@@ -284,32 +210,17 @@ function containsWord(content, word) {
 
 function detectModeration(content) {
   let general = false;
-
   let sensitive = false;
 
-  for (
-    const word of GENERAL_INSULTS
-  ) {
-    if (
-      containsWord(
-        content,
-        word
-      )
-    ) {
+  for (const word of GENERAL_INSULTS) {
+    if (containsWord(content, word)) {
       general = true;
       break;
     }
   }
 
-  for (
-    const word of SENSITIVE_PATTERNS
-  ) {
-    if (
-      containsWord(
-        content,
-        word
-      )
-    ) {
+  for (const word of SENSITIVE_PATTERNS) {
+    if (containsWord(content, word)) {
       sensitive = true;
       break;
     }
@@ -321,22 +232,14 @@ function detectModeration(content) {
   };
 }
 
-
 // ============================================================
 // TRACKING
 // ============================================================
 
-function registerDetection(
-  userId,
-  type
-) {
-  const now =
-    Date.now();
+function registerDetection(userId, type) {
+  const now = Date.now();
 
-  let data =
-    detectionTracker.get(
-      userId
-    );
+  let data = detectionTracker.get(userId);
 
   if (!data) {
     data = {
@@ -345,61 +248,42 @@ function registerDetection(
     };
   }
 
-  data.general =
-    data.general.filter(
-      timestamp =>
-        now - timestamp <
-        DETECTION_WINDOW
-    );
+  data.general = data.general.filter(
+    timestamp =>
+      now - timestamp < DETECTION_WINDOW
+  );
 
-  data.sensitive =
-    data.sensitive.filter(
-      timestamp =>
-        now - timestamp <
-        DETECTION_WINDOW
-    );
+  data.sensitive = data.sensitive.filter(
+    timestamp =>
+      now - timestamp < DETECTION_WINDOW
+  );
 
-  if (
-    type === 'general'
-  ) {
+  if (type === 'general') {
     data.general.push(now);
   }
 
-  if (
-    type === 'sensitive'
-  ) {
+  if (type === 'sensitive') {
     data.sensitive.push(now);
   }
 
-  detectionTracker.set(
-    userId,
-    data
-  );
+  detectionTracker.set(userId, data);
 
   return data;
 }
 
-
 // ============================================================
-// TWITCH — HEADERS
+// TWITCH API
 // ============================================================
 
 function twitchHeaders() {
-  const token =
-    process.env.TWITCH_ACCESS_TOKEN;
-
   return {
-    'Client-ID':
-      TWITCH_CLIENT_ID,
-
-    'Authorization':
-      `Bearer ${token}`
+    'Client-ID': TWITCH_CLIENT_ID,
+    'Authorization': `Bearer ${process.env.TWITCH_ACCESS_TOKEN}`
   };
 }
 
-
 // ============================================================
-// TWITCH — REFRESH TOKEN
+// REFRESH TOKEN TWITCH
 // ============================================================
 
 async function refreshTwitchToken() {
@@ -410,7 +294,6 @@ async function refreshTwitchToken() {
     console.error(
       '❌ TWITCH_REFRESH_TOKEN absent.'
     );
-
     return false;
   }
 
@@ -421,41 +304,30 @@ async function refreshTwitchToken() {
     console.error(
       '❌ Identifiants Twitch incomplets.'
     );
-
     return false;
   }
 
   try {
-    const response =
-      await fetch(
-        'https://id.twitch.tv/oauth2/token',
-        {
-          method: 'POST',
+    const response = await fetch(
+      'https://id.twitch.tv/oauth2/token',
+      {
+        method: 'POST',
 
-          headers: {
-            'Content-Type':
-              'application/x-www-form-urlencoded'
-          },
+        headers: {
+          'Content-Type':
+            'application/x-www-form-urlencoded'
+        },
 
-          body:
-            new URLSearchParams({
-              client_id:
-                TWITCH_CLIENT_ID,
+        body: new URLSearchParams({
+          client_id: TWITCH_CLIENT_ID,
+          client_secret: TWITCH_CLIENT_SECRET,
+          grant_type: 'refresh_token',
+          refresh_token: refreshToken
+        })
+      }
+    );
 
-              client_secret:
-                TWITCH_CLIENT_SECRET,
-
-              grant_type:
-                'refresh_token',
-
-              refresh_token:
-                refreshToken
-            })
-        }
-      );
-
-    const data =
-      await response.json();
+    const data = await response.json();
 
     if (!response.ok) {
       console.error(
@@ -469,7 +341,7 @@ async function refreshTwitchToken() {
 
     if (!data.access_token) {
       console.error(
-        '❌ Twitch n’a fourni aucun access token.'
+        '❌ Aucun access token Twitch reçu.'
       );
 
       return false;
@@ -491,7 +363,7 @@ async function refreshTwitchToken() {
       );
 
       console.warn(
-        '⚠️ Pense à le sauvegarder dans Render.'
+        '⚠️ Pense à remplacer TWITCH_REFRESH_TOKEN dans Render.'
       );
     }
 
@@ -507,17 +379,12 @@ async function refreshTwitchToken() {
   }
 }
 
-
 // ============================================================
-// TWITCH — UTILISATEUR
+// TWITCH USER
 // ============================================================
 
-async function getTwitchUserId(
-  username
-) {
-  if (
-    !process.env.TWITCH_ACCESS_TOKEN
-  ) {
+async function getTwitchUserId(username) {
+  if (!process.env.TWITCH_ACCESS_TOKEN) {
     console.error(
       '❌ TWITCH_ACCESS_TOKEN absent.'
     );
@@ -526,17 +393,14 @@ async function getTwitchUserId(
   }
 
   try {
-    const response =
-      await fetch(
-        `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`,
-        {
-          headers:
-            twitchHeaders()
-        }
-      );
+    const response = await fetch(
+      `https://api.twitch.tv/helix/users?login=${encodeURIComponent(username)}`,
+      {
+        headers: twitchHeaders()
+      }
+    );
 
-    const data =
-      await response.json();
+    const data = await response.json();
 
     if (!response.ok) {
       console.error(
@@ -560,8 +424,7 @@ async function getTwitchUserId(
       return null;
     }
 
-    const user =
-      data.data[0];
+    const user = data.data[0];
 
     console.log(
       `Compte Twitch trouvé : ${user.login}`
@@ -583,32 +446,24 @@ async function getTwitchUserId(
   }
 }
 
-
 // ============================================================
-// TWITCH — PROFIL
+// TWITCH PROFIL
 // ============================================================
 
-async function getTwitchUser(
-  userId
-) {
-  if (
-    !process.env.TWITCH_ACCESS_TOKEN
-  ) {
+async function getTwitchUser(userId) {
+  if (!process.env.TWITCH_ACCESS_TOKEN) {
     return null;
   }
 
   try {
-    const response =
-      await fetch(
-        `https://api.twitch.tv/helix/users?id=${encodeURIComponent(userId)}`,
-        {
-          headers:
-            twitchHeaders()
-        }
-      );
+    const response = await fetch(
+      `https://api.twitch.tv/helix/users?id=${encodeURIComponent(userId)}`,
+      {
+        headers: twitchHeaders()
+      }
+    );
 
-    const data =
-      await response.json();
+    const data = await response.json();
 
     if (!response.ok) {
       console.error(
@@ -639,32 +494,24 @@ async function getTwitchUser(
   }
 }
 
-
 // ============================================================
-// TWITCH — STREAM
+// TWITCH STREAM
 // ============================================================
 
-async function getTwitchStream(
-  userId
-) {
-  if (
-    !process.env.TWITCH_ACCESS_TOKEN
-  ) {
+async function getTwitchStream(userId) {
+  if (!process.env.TWITCH_ACCESS_TOKEN) {
     return null;
   }
 
   try {
-    const response =
-      await fetch(
-        `https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(userId)}`,
-        {
-          headers:
-            twitchHeaders()
-        }
-      );
+    const response = await fetch(
+      `https://api.twitch.tv/helix/streams?user_id=${encodeURIComponent(userId)}`,
+      {
+        headers: twitchHeaders()
+      }
+    );
 
-    const data =
-      await response.json();
+    const data = await response.json();
 
     if (!response.ok) {
       console.error(
@@ -695,9 +542,8 @@ async function getTwitchStream(
   }
 }
 
-
 // ============================================================
-// TWITCH — ANNONCE LIVE
+// ANNONCE LIVE
 // ============================================================
 
 async function sendTwitchLiveAnnouncement(
@@ -737,30 +583,23 @@ async function sendTwitchLiveAnnouncement(
         .setTitle(
           '🔴 ASTER ANGXL EST EN LIVE !'
         )
-        .setURL(
-          twitchUrl
-        )
+        .setURL(twitchUrl)
         .setDescription(
           `Il vient de lancer un live sur **${gameName}** 🎮\n\n` +
           `Passe lui faire un coucou 👀\n\n` +
           `👉 **[Regarder le live](${twitchUrl})**`
         )
         .setFooter({
-          text:
-            'Nexus • Twitch'
+          text: 'Nexus • Twitch'
         })
         .setTimestamp();
 
     if (profileImage) {
-      embed.setThumbnail(
-        profileImage
-      );
+      embed.setThumbnail(profileImage);
     }
 
     await channel.send({
-      embeds: [
-        embed
-      ]
+      embeds: [embed]
     });
 
     console.log(
@@ -779,65 +618,42 @@ async function sendTwitchLiveAnnouncement(
   }
 }
 
-
 // ============================================================
-// TWITCH EVENTSUB — SUBSCRIPTION
+// EVENTSUB
 // ============================================================
 
 async function createStreamOnlineSubscription(
   sessionId,
   userId
 ) {
-  if (
-    !process.env.TWITCH_ACCESS_TOKEN
-  ) {
-    console.error(
-      '❌ Access Token Twitch absent.'
-    );
-
-    return false;
-  }
-
   try {
-    const response =
-      await fetch(
-        'https://api.twitch.tv/helix/eventsub/subscriptions',
-        {
-          method: 'POST',
+    const response = await fetch(
+      'https://api.twitch.tv/helix/eventsub/subscriptions',
+      {
+        method: 'POST',
 
-          headers: {
-            ...twitchHeaders(),
+        headers: {
+          ...twitchHeaders(),
+          'Content-Type': 'application/json'
+        },
 
-            'Content-Type':
-              'application/json'
+        body: JSON.stringify({
+          type: 'stream.online',
+          version: '1',
+
+          condition: {
+            broadcaster_user_id: userId
           },
 
-          body:
-            JSON.stringify({
-              type:
-                'stream.online',
+          transport: {
+            method: 'websocket',
+            session_id: sessionId
+          }
+        })
+      }
+    );
 
-              version:
-                '1',
-
-              condition: {
-                broadcaster_user_id:
-                  userId
-              },
-
-              transport: {
-                method:
-                  'websocket',
-
-                session_id:
-                  sessionId
-              }
-            })
-        }
-      );
-
-    const data =
-      await response.json();
+    const data = await response.json();
 
     if (!response.ok) {
       console.error(
@@ -865,9 +681,8 @@ async function createStreamOnlineSubscription(
   }
 }
 
-
 // ============================================================
-// TWITCH EVENTSUB — RECONNEXION
+// EVENTSUB RECONNEXION
 // ============================================================
 
 function clearTwitchReconnectTimer() {
@@ -876,11 +691,9 @@ function clearTwitchReconnectTimer() {
       twitchReconnectTimer
     );
 
-    twitchReconnectTimer =
-      null;
+    twitchReconnectTimer = null;
   }
 }
-
 
 function scheduleTwitchReconnect() {
   if (shuttingDown) {
@@ -904,7 +717,9 @@ function scheduleTwitchReconnect() {
     );
 
   console.warn(
-    `⏳ Reconnexion Twitch EventSub dans ${Math.round(delay / 1000)}s.`
+    `⏳ Reconnexion Twitch EventSub dans ${Math.round(
+      delay / 1000
+    )}s.`
   );
 
   twitchReconnectTimer =
@@ -913,15 +728,10 @@ function scheduleTwitchReconnect() {
         twitchReconnectTimer =
           null;
 
-        if (shuttingDown) {
-          return;
-        }
-
-        if (!twitchUserId) {
-          console.error(
-            '❌ User ID Twitch absent.'
-          );
-
+        if (
+          shuttingDown ||
+          !twitchUserId
+        ) {
           return;
         }
 
@@ -933,15 +743,8 @@ function scheduleTwitchReconnect() {
     );
 }
 
-
-function twitchEventSubReconnectAttemptReset() {
-  twitchReconnectAttempt =
-    0;
-}
-
-
 // ============================================================
-// TWITCH EVENTSUB — CONNEXION
+// EVENTSUB CONNEXION
 // ============================================================
 
 async function connectTwitchEventSub(
@@ -949,11 +752,10 @@ async function connectTwitchEventSub(
   websocketUrl =
     'wss://eventsub.wss.twitch.tv/ws'
 ) {
-  if (shuttingDown) {
-    return null;
-  }
-
-  if (!userId) {
+  if (
+    shuttingDown ||
+    !userId
+  ) {
     return null;
   }
 
@@ -971,17 +773,12 @@ async function connectTwitchEventSub(
 
   clearTwitchReconnectTimer();
 
-  twitchEventSubConnecting =
-    true;
-
   console.log(
     '🔌 Connexion Twitch EventSub...'
   );
 
   const ws =
-    new WebSocket(
-      websocketUrl
-    );
+    new WebSocket(websocketUrl);
 
   twitchEventSubSocket =
     ws;
@@ -989,9 +786,6 @@ async function connectTwitchEventSub(
   ws.on(
     'open',
     () => {
-      twitchEventSubConnecting =
-        false;
-
       console.log(
         '✅ Twitch EventSub connecté.'
       );
@@ -1008,8 +802,7 @@ async function connectTwitchEventSub(
           );
 
         const metadata =
-          message.metadata ||
-          {};
+          message.metadata || {};
 
         const messageType =
           metadata.message_type;
@@ -1029,7 +822,8 @@ async function connectTwitchEventSub(
           twitchEventSubSessionId =
             session.id;
 
-          twitchEventSubReconnectAttemptReset();
+          twitchReconnectAttempt =
+            0;
 
           console.log(
             '✅ Session Twitch EventSub reçue.'
@@ -1055,8 +849,7 @@ async function connectTwitchEventSub(
           'notification'
         ) {
           const payload =
-            message.payload ||
-            {};
+            message.payload || {};
 
           const subscription =
             payload.subscription;
@@ -1080,8 +873,7 @@ async function connectTwitchEventSub(
               return;
             }
 
-            let stream =
-              null;
+            let stream = null;
 
             for (
               let attempt = 1;
@@ -1180,9 +972,6 @@ async function connectTwitchEventSub(
   ws.on(
     'error',
     error => {
-      twitchEventSubConnecting =
-        false;
-
       console.error(
         '❌ WebSocket Twitch EventSub :',
         error.message
@@ -1193,9 +982,6 @@ async function connectTwitchEventSub(
   ws.on(
     'close',
     (code, reason) => {
-      twitchEventSubConnecting =
-        false;
-
       if (
         twitchEventSubSocket ===
         ws
@@ -1208,7 +994,11 @@ async function connectTwitchEventSub(
       }
 
       console.warn(
-        `🟠 Twitch EventSub fermé. Code=${code}`
+        `🟠 Twitch EventSub fermé. Code=${code} Reason=${
+          reason
+            ? reason.toString()
+            : 'aucune'
+        }`
       );
 
       if (!shuttingDown) {
@@ -1220,9 +1010,8 @@ async function connectTwitchEventSub(
   return ws;
 }
 
-
 // ============================================================
-// TWITCH CHAT — RECONNEXION
+// TWITCH CHAT RECONNEXION
 // ============================================================
 
 function clearTwitchChatReconnectTimer() {
@@ -1235,7 +1024,6 @@ function clearTwitchChatReconnectTimer() {
       null;
   }
 }
-
 
 function scheduleTwitchChatReconnect() {
   if (shuttingDown) {
@@ -1259,7 +1047,9 @@ function scheduleTwitchChatReconnect() {
     );
 
   console.warn(
-    `⏳ Reconnexion Twitch Chat dans ${Math.round(delay / 1000)}s.`
+    `⏳ Reconnexion Twitch Chat dans ${Math.round(
+      delay / 1000
+    )}s.`
   );
 
   twitchChatReconnectTimer =
@@ -1276,18 +1066,16 @@ function scheduleTwitchChatReconnect() {
     );
 }
 
-
 // ============================================================
-// TWITCH CHAT — ENVOI
+// TWITCH CHAT ENVOI
 // ============================================================
 
-function sendTwitchChatMessage(
-  text
-) {
+function sendTwitchChatMessage(text) {
   if (
     !twitchChatSocket ||
     twitchChatSocket.readyState !==
-      WebSocket.OPEN
+      WebSocket.OPEN ||
+    !twitchChatAuthenticated
   ) {
     console.warn(
       '⚠️ Twitch Chat non connecté.'
@@ -1320,14 +1108,11 @@ function sendTwitchChatMessage(
   return true;
 }
 
-
 // ============================================================
-// TWITCH CHAT — COMMANDES
+// TWITCH CHAT COMMANDES
 // ============================================================
 
-function handleTwitchChatMessage(
-  line
-) {
+function handleTwitchChatMessage(line) {
   const match =
     line.match(
       /^:([^!]+)!.* PRIVMSG #[^ ]+ :(.+)$/i
@@ -1364,42 +1149,13 @@ function handleTwitchChatMessage(
     `📩 Twitch : !${command} par ${username}`
   );
 
-  // ----------------------------------------------------------
-  // !discord
-  // ----------------------------------------------------------
-
   if (
-    command === 'discord'
-  ) {
-    if (!DISCORD_INVITE) {
-      console.error(
-        '❌ DISCORD_INVITE absent dans Render.'
-      );
-
-      sendTwitchChatMessage(
-        '❌ Le lien Discord n’est pas configuré pour le moment.'
-      );
-
-      return;
-    }
-
-    sendTwitchChatMessage(
-      `💫 Rejoins notre serveur Discord : ${DISCORD_INVITE}`
-    );
-
-    return;
-  }
-
-  // ----------------------------------------------------------
-  // !serveur
-  // ----------------------------------------------------------
-
-  if (
+    command === 'discord' ||
     command === 'serveur'
   ) {
     if (!DISCORD_INVITE) {
       sendTwitchChatMessage(
-        '❌ Le lien Discord n’est pas configuré pour le moment.'
+        '❌ Le lien Discord n’est pas configuré.'
       );
 
       return;
@@ -1408,14 +1164,11 @@ function handleTwitchChatMessage(
     sendTwitchChatMessage(
       `💫 Rejoins notre serveur Discord : ${DISCORD_INVITE}`
     );
-
-    return;
   }
 }
 
-
 // ============================================================
-// TWITCH CHAT — CONNEXION
+// TWITCH CHAT CONNEXION
 // ============================================================
 
 async function connectTwitchChat() {
@@ -1448,8 +1201,8 @@ async function connectTwitchChat() {
 
   clearTwitchChatReconnectTimer();
 
-  twitchChatConnecting =
-    true;
+  twitchChatAuthenticated =
+    false;
 
   console.log(
     '💬 Connexion au chat Twitch...'
@@ -1466,15 +1219,14 @@ async function connectTwitchChat() {
   ws.on(
     'open',
     () => {
-      twitchChatConnecting =
-        false;
-
       console.log(
         '🟢 Connexion Twitch Chat ouverte.'
       );
 
       const oauthToken =
-        accessToken.startsWith('oauth:')
+        accessToken.startsWith(
+          'oauth:'
+        )
           ? accessToken
           : `oauth:${accessToken}`;
 
@@ -1502,14 +1254,12 @@ async function connectTwitchChat() {
         const lines =
           data.split('\r\n');
 
-        for (
-          const line of lines
-        ) {
+        for (const line of lines) {
           if (!line) {
             continue;
           }
 
-          // PING Twitch
+          // PING
           if (
             line.startsWith('PING')
           ) {
@@ -1520,10 +1270,13 @@ async function connectTwitchChat() {
             continue;
           }
 
-          // Connexion réussie
+          // Authentification réussie
           if (
             line.includes(' 001 ')
           ) {
+            twitchChatAuthenticated =
+              true;
+
             twitchChatReconnectAttempt =
               0;
 
@@ -1534,19 +1287,39 @@ async function connectTwitchChat() {
             continue;
           }
 
-          // Erreur authentification
+          // NOTICE Twitch
           if (
-            line.includes(
-              'Login authentication failed'
+            line.startsWith(
+              ':tmi.twitch.tv NOTICE'
             )
           ) {
-            console.error(
-              '❌ Authentification Twitch Chat refusée.'
+            console.warn(
+              '⚠️ Twitch Chat :',
+              line
             );
 
-            console.error(
-              '⚠️ Vérifie le token Twitch et ses permissions chat:read/chat:edit.'
-            );
+            if (
+              line.toLowerCase().includes(
+                'login authentication failed'
+              ) ||
+              line.toLowerCase().includes(
+                'improperly formatted auth'
+              ) ||
+              line.toLowerCase().includes(
+                'authentication failed'
+              )
+            ) {
+              twitchChatAuthenticated =
+                false;
+
+              console.error(
+                '❌ Authentification Twitch Chat refusée.'
+              );
+
+              console.error(
+                '⚠️ Vérifie TWITCH_ACCESS_TOKEN et que le token correspond à TWITCH_USERNAME.'
+              );
+            }
 
             continue;
           }
@@ -1573,7 +1346,7 @@ async function connectTwitchChat() {
   ws.on(
     'error',
     error => {
-      twitchChatConnecting =
+      twitchChatAuthenticated =
         false;
 
       console.error(
@@ -1586,7 +1359,7 @@ async function connectTwitchChat() {
   ws.on(
     'close',
     (code, reason) => {
-      twitchChatConnecting =
+      twitchChatAuthenticated =
         false;
 
       if (
@@ -1598,7 +1371,11 @@ async function connectTwitchChat() {
       }
 
       console.warn(
-        `🟠 Twitch Chat fermé. Code=${code} Reason=${reason ? reason.toString() : 'aucune'}`
+        `🟠 Twitch Chat fermé. Code=${code} Reason=${
+          reason
+            ? reason.toString()
+            : 'aucune'
+        }`
       );
 
       if (!shuttingDown) {
@@ -1610,14 +1387,11 @@ async function connectTwitchChat() {
   return ws;
 }
 
-
 // ============================================================
-// SANCTIONS — PERMISSIONS
+// SANCTIONS
 // ============================================================
 
-function canModerate(
-  interaction
-) {
+function canModerate(interaction) {
   return Boolean(
     interaction.memberPermissions &&
     interaction.memberPermissions.has(
@@ -1626,10 +1400,7 @@ function canModerate(
   );
 }
 
-
-function isAdmin(
-  interaction
-) {
+function isAdmin(interaction) {
   return Boolean(
     interaction.memberPermissions &&
     interaction.memberPermissions.has(
@@ -1638,9 +1409,8 @@ function isAdmin(
   );
 }
 
-
 // ============================================================
-// SANCTIONS — CRÉATION
+// CRÉATION SANCTION
 // ============================================================
 
 async function createSanctionRequest({
@@ -1669,44 +1439,28 @@ async function createSanctionRequest({
       `${Date.now()}_${targetUser.id}`;
 
     const request = {
-      id:
-        requestId,
-
-      guildId:
-        guild.id,
-
-      targetUserId:
-        targetUser.id,
+      id: requestId,
+      guildId: guild.id,
+      targetUserId: targetUser.id,
 
       targetTag:
         targetUser.tag ||
         targetUser.username,
 
       proposedSanction,
-
       finalSanction:
         proposedSanction,
 
       reason,
-
       source,
-
       detectedMessage,
 
-      yesVotes:
-        new Set(),
+      yesVotes: new Set(),
+      noVotes: new Set(),
 
-      noVotes:
-        new Set(),
-
-      status:
-        'pending',
-
-      messageId:
-        null,
-
-      createdAt:
-        Date.now()
+      status: 'pending',
+      messageId: null,
+      createdAt: Date.now()
     };
 
     const sourceText =
@@ -1727,8 +1481,7 @@ async function createSanctionRequest({
           `🔎 **Source :** ${sourceText}`
         )
         .addFields({
-          name:
-            '🗳️ Votes',
+          name: '🗳️ Votes',
 
           value:
             '🟢 Pour : **0**\n' +
@@ -1795,13 +1548,8 @@ async function createSanctionRequest({
 
     const sentMessage =
       await channel.send({
-        embeds: [
-          embed
-        ],
-
-        components: [
-          buttons
-        ]
+        embeds: [embed],
+        components: [buttons]
       });
 
     request.messageId =
@@ -1829,9 +1577,8 @@ async function createSanctionRequest({
   }
 }
 
-
 // ============================================================
-// SANCTIONS — VOTE
+// VOTE SANCTION
 // ============================================================
 
 async function handleSanctionVote(
@@ -1846,9 +1593,7 @@ async function handleSanctionVote(
     await interaction.reply({
       content:
         '❌ Tu n’as pas la permission de participer à cette décision.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     return;
@@ -1863,9 +1608,7 @@ async function handleSanctionVote(
     await interaction.reply({
       content:
         '❌ Cette demande n’est plus disponible en mémoire.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     return;
@@ -1878,9 +1621,7 @@ async function handleSanctionVote(
     await interaction.reply({
       content:
         '❌ Cette demande est déjà terminée.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     return;
@@ -1902,9 +1643,7 @@ async function handleSanctionVote(
         vote === 'yes'
           ? '👑 Décision administrative : demande validée.'
           : '👑 Décision administrative : demande refusée.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     await finalizeSanctionRequest(
@@ -1925,9 +1664,7 @@ async function handleSanctionVote(
     await interaction.reply({
       content:
         '❌ Tu as déjà voté sur cette demande.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     return;
@@ -1953,9 +1690,7 @@ async function handleSanctionVote(
     await interaction.reply({
       content:
         '🟢 3 votes favorables atteints. La demande est validée.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     await finalizeSanctionRequest(
@@ -1974,15 +1709,12 @@ async function handleSanctionVote(
       vote === 'yes'
         ? '🟢 Ton vote Pour a été enregistré.'
         : '🔴 Ton vote Contre a été enregistré.',
-
-    ephemeral:
-      true
+    ephemeral: true
   });
 }
 
-
 // ============================================================
-// SANCTIONS — FINALISATION
+// FINALISATION
 // ============================================================
 
 async function finalizeSanctionRequest(
@@ -2039,9 +1771,7 @@ async function finalizeSanctionRequest(
             .setStyle(
               ButtonStyle.Success
             )
-            .setDisabled(
-              true
-            ),
+            .setDisabled(true),
 
           new ButtonBuilder()
             .setCustomId(
@@ -2053,9 +1783,7 @@ async function finalizeSanctionRequest(
             .setStyle(
               ButtonStyle.Danger
             )
-            .setDisabled(
-              true
-            ),
+            .setDisabled(true),
 
           new ButtonBuilder()
             .setCustomId(
@@ -2067,19 +1795,12 @@ async function finalizeSanctionRequest(
             .setStyle(
               ButtonStyle.Secondary
             )
-            .setDisabled(
-              true
-            )
+            .setDisabled(true)
         );
 
     await message.edit({
-      embeds: [
-        embed
-      ],
-
-      components: [
-        disabledRow
-      ]
+      embeds: [embed],
+      components: [disabledRow]
     });
 
   } catch (error) {
@@ -2090,9 +1811,8 @@ async function finalizeSanctionRequest(
   }
 }
 
-
 // ============================================================
-// SANCTIONS — MODIFICATION
+// MODIFICATION SANCTION
 // ============================================================
 
 async function handleModifySanction(
@@ -2106,9 +1826,7 @@ async function handleModifySanction(
     await interaction.reply({
       content:
         '❌ Tu n’as pas la permission de modifier cette demande.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     return;
@@ -2123,9 +1841,7 @@ async function handleModifySanction(
     await interaction.reply({
       content:
         '❌ Demande introuvable.',
-
-      ephemeral:
-        true
+      ephemeral: true
     });
 
     return;
@@ -2134,15 +1850,12 @@ async function handleModifySanction(
   await interaction.reply({
     content:
       '🟡 La modification de sanction sera ajoutée dans une prochaine étape.',
-
-    ephemeral:
-      true
+    ephemeral: true
   });
 }
 
-
 // ============================================================
-// SANCTIONS — UPDATE
+// UPDATE SANCTION
 // ============================================================
 
 async function updateSanctionMessage(
@@ -2198,9 +1911,7 @@ async function updateSanctionMessage(
     }
 
     await message.edit({
-      embeds: [
-        embed
-      ]
+      embeds: [embed]
     });
 
   } catch (error) {
@@ -2211,16 +1922,14 @@ async function updateSanctionMessage(
   }
 }
 
-
 // ============================================================
-// DISCORD — INTERACTIONS
+// DISCORD INTERACTIONS
 // ============================================================
 
 client.on(
   'interactionCreate',
   async interaction => {
     try {
-
       if (
         interaction.isChatInputCommand()
       ) {
@@ -2238,9 +1947,7 @@ client.on(
           await interaction.reply({
             content:
               '❌ Cette commande est réservée à la modération.',
-
-            ephemeral:
-              true
+            ephemeral: true
           });
 
           return;
@@ -2265,9 +1972,7 @@ client.on(
           await interaction.reply({
             content:
               '❌ Membre introuvable.',
-
-            ephemeral:
-              true
+            ephemeral: true
           });
 
           return;
@@ -2280,9 +1985,7 @@ client.on(
           await interaction.reply({
             content:
               '❌ Tu ne peux pas créer une demande contre toi-même.',
-
-            ephemeral:
-              true
+            ephemeral: true
           });
 
           return;
@@ -2295,9 +1998,7 @@ client.on(
           await interaction.reply({
             content:
               '❌ Cette commande doit être utilisée sur un serveur.',
-
-            ephemeral:
-              true
+            ephemeral: true
           });
 
           return;
@@ -2316,9 +2017,7 @@ client.on(
           await interaction.reply({
             content:
               '❌ Impossible de créer une demande contre un administrateur.',
-
-            ephemeral:
-              true
+            ephemeral: true
           });
 
           return;
@@ -2327,26 +2026,17 @@ client.on(
         const request =
           await createSanctionRequest({
             guild,
-
-            targetUser:
-              target,
-
-            proposedSanction:
-              sanction,
-
+            targetUser: target,
+            proposedSanction: sanction,
             reason,
-
-            source:
-              interaction.user.id
+            source: interaction.user.id
           });
 
         if (!request) {
           await interaction.reply({
             content:
               '❌ Impossible de créer la demande.',
-
-            ephemeral:
-              true
+            ephemeral: true
           });
 
           return;
@@ -2355,14 +2045,11 @@ client.on(
         await interaction.reply({
           content:
             '✅ Demande de sanction créée dans le salon staff.',
-
-          ephemeral:
-            true
+          ephemeral: true
         });
 
         return;
       }
-
 
       if (
         interaction.isButton()
@@ -2437,16 +2124,13 @@ client.on(
           await interaction.reply({
             content:
               '❌ Une erreur est survenue.',
-
-            ephemeral:
-              true
+            ephemeral: true
           });
         } catch {}
       }
     }
   }
 );
-
 
 // ============================================================
 // AUTO-MODÉRATION DISCORD
@@ -2583,7 +2267,6 @@ client.on(
   }
 );
 
-
 // ============================================================
 // COMMANDE /SANCTION
 // ============================================================
@@ -2627,31 +2310,24 @@ const sanctionCommand =
             {
               name:
                 'Avertissement',
-
               value:
                 'Avertissement'
             },
-
             {
               name:
                 'Timeout',
-
               value:
                 'Timeout'
             },
-
             {
               name:
                 'Kick',
-
               value:
                 'Kick'
             },
-
             {
               name:
                 'Ban',
-
               value:
                 'Ban'
             }
@@ -2671,7 +2347,6 @@ const sanctionCommand =
             true
           )
     );
-
 
 // ============================================================
 // ENREGISTREMENT COMMANDES
@@ -2721,7 +2396,6 @@ async function registerCommands() {
   }
 }
 
-
 // ============================================================
 // DISCORD READY
 // ============================================================
@@ -2751,9 +2425,8 @@ client.once(
   }
 );
 
-
 // ============================================================
-// DISCORD ÉVÉNEMENTS
+// DISCORD EVENTS
 // ============================================================
 
 client.on(
@@ -2766,7 +2439,6 @@ client.on(
   }
 );
 
-
 client.on(
   'warn',
   message => {
@@ -2777,7 +2449,6 @@ client.on(
   }
 );
 
-
 client.on(
   'debug',
   message => {
@@ -2787,7 +2458,6 @@ client.on(
     );
   }
 );
-
 
 client.on(
   'shardReady',
@@ -2801,7 +2471,6 @@ client.on(
     );
   }
 );
-
 
 client.on(
   'shardDisconnect',
@@ -2825,7 +2494,6 @@ client.on(
   }
 );
 
-
 client.on(
   'shardReconnecting',
   id => {
@@ -2839,7 +2507,6 @@ client.on(
     );
   }
 );
-
 
 client.on(
   'shardResume',
@@ -2862,7 +2529,6 @@ client.on(
     );
   }
 );
-
 
 // ============================================================
 // WATCHDOG
@@ -2892,9 +2558,15 @@ setInterval(
       console.log(
         `[WATCHDOG] ` +
         `Discord=${statusName} | ` +
-        `user=${client.user ? client.user.tag : 'non connecté'} | ` +
+        `user=${
+          client.user
+            ? client.user.tag
+            : 'non connecté'
+        } | ` +
         `ping=${ping}ms | ` +
-        `uptime=${Math.floor(process.uptime())}s | ` +
+        `uptime=${Math.floor(
+          process.uptime()
+        )}s | ` +
         `TwitchEventSub=${
           twitchEventSubSocket &&
           twitchEventSubSocket.readyState ===
@@ -2905,7 +2577,8 @@ setInterval(
         `TwitchChat=${
           twitchChatSocket &&
           twitchChatSocket.readyState ===
-            WebSocket.OPEN
+            WebSocket.OPEN &&
+          twitchChatAuthenticated
             ? 'connected'
             : 'disconnected'
         }`
@@ -2920,7 +2593,6 @@ setInterval(
   },
   WATCHDOG_INTERVAL
 );
-
 
 // ============================================================
 // SERVEUR HTTP
@@ -2993,7 +2665,8 @@ const server =
             Boolean(
               twitchChatSocket &&
               twitchChatSocket.readyState ===
-                WebSocket.OPEN
+                WebSocket.OPEN &&
+              twitchChatAuthenticated
             );
 
           res.writeHead(
@@ -3260,9 +2933,8 @@ const server =
     }
   );
 
-
 // ============================================================
-// SERVEUR HTTP
+// SERVEUR
 // ============================================================
 
 server.listen(
@@ -3274,7 +2946,6 @@ server.listen(
     );
   }
 );
-
 
 // ============================================================
 // INITIALISATION TWITCH
@@ -3321,10 +2992,9 @@ async function initializeTwitch() {
     userId
   );
 
-  // Chat Twitch
+  // Chat
   await connectTwitchChat();
 }
-
 
 // ============================================================
 // DIAGNOSTIC
@@ -3385,7 +3055,6 @@ console.log(
   '============================================'
 );
 
-
 // ============================================================
 // LOGIN DISCORD
 // ============================================================
@@ -3420,7 +3089,6 @@ async function initializeDiscord() {
   }
 }
 
-
 // ============================================================
 // INITIALISATION GLOBALE
 // ============================================================
@@ -3430,7 +3098,6 @@ async function initializeDiscord() {
 
   await initializeTwitch();
 })();
-
 
 // ============================================================
 // HEARTBEAT
@@ -3443,12 +3110,13 @@ setInterval(
     }
 
     console.log(
-      `[PROCESS] Nexus actif depuis ${Math.floor(process.uptime())} secondes.`
+      `[PROCESS] Nexus actif depuis ${Math.floor(
+        process.uptime()
+      )} secondes.`
     );
   },
   30000
 );
-
 
 // ============================================================
 // NETTOYAGE MÉMOIRE
@@ -3530,7 +3198,6 @@ setInterval(
   5 * 60 * 1000
 );
 
-
 // ============================================================
 // ERREURS PROCESSUS
 // ============================================================
@@ -3545,7 +3212,6 @@ process.on(
   }
 );
 
-
 process.on(
   'uncaughtException',
   error => {
@@ -3555,7 +3221,6 @@ process.on(
     );
   }
 );
-
 
 // ============================================================
 // ARRÊT PROPRE
@@ -3580,7 +3245,7 @@ async function gracefulShutdown(
     `🟠 ${signal} reçu. Arrêt propre de Nexus.`
   );
 
-  // Twitch EventSub
+  // EventSub
   clearTwitchReconnectTimer();
 
   if (
@@ -3597,7 +3262,7 @@ async function gracefulShutdown(
   twitchEventSubSocket =
     null;
 
-  // Twitch Chat
+  // Chat
   clearTwitchChatReconnectTimer();
 
   if (
@@ -3613,6 +3278,9 @@ async function gracefulShutdown(
 
   twitchChatSocket =
     null;
+
+  twitchChatAuthenticated =
+    false;
 
   // Discord
   try {
@@ -3659,7 +3327,6 @@ async function gracefulShutdown(
   process.exit(0);
 }
 
-
 process.on(
   'SIGTERM',
   () => {
@@ -3669,7 +3336,6 @@ process.on(
   }
 );
 
-
 process.on(
   'SIGINT',
   () => {
@@ -3678,7 +3344,6 @@ process.on(
     );
   }
 );
-
 
 // ============================================================
 // FIN

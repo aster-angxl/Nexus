@@ -22,7 +22,8 @@ const {
 // CONFIGURATION
 // ============================================================
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT =
+  Number(process.env.PORT || 3000);
 
 const DISCORD_TOKEN =
   process.env.DISCORD_TOKEN;
@@ -43,6 +44,9 @@ const TWITCH_REDIRECT_URI =
 const TWITCH_USERNAME =
   process.env.TWITCH_USERNAME ||
   'aster_angxl';
+
+const DISCORD_INVITE =
+  process.env.DISCORD_INVITE;
 
 const STREAM_CHANNEL_ID =
   process.env.STREAM_CHANNEL_ID ||
@@ -67,12 +71,73 @@ const SANCTION_COOLDOWN =
 
 const GENERAL_INSULTS = [
   'pute',
+  'putain',
   'salope',
+  'connard',
+  'connasse',
   'encule',
-  'enculé'
+  'enculé',
+  'enculer',
+  'merde',
+  'bordel',
+  'batard',
+  'bâtard',
+  'batarde',
+  'bâtarde',
+  'fdp',
+  'ntm',
+  'nique',
+  'niquer',
+  'con',
+  'conne',
+  'abruti',
+  'abrutie',
+  'idiot',
+  'idiote',
+  'imbecile',
+  'imbécile',
+  'tg',
+  'ta gueule'
 ];
 
-const SENSITIVE_PATTERNS = [];
+
+/*
+ * Liste séparée pour les propos discriminatoires.
+ *
+ * IMPORTANT :
+ * On détecte ici les insultes/propos directement utilisés
+ * comme attaque discriminatoire.
+ *
+ * Le système doit idéalement être amélioré avec une analyse
+ * de contexte avant une sanction automatique définitive.
+ */
+
+const SENSITIVE_PATTERNS = [
+  // Homophobie
+  'pédé',
+  'pede',
+  'pédale',
+  'pedale',
+  'tapette',
+  'sale gay',
+  'sale lesbienne',
+
+  // Racisme
+  'sale noir',
+  'sale arabe',
+  'sale asiat',
+  'sale blanc',
+
+  // Grossophobie
+  'gros porc',
+  'grosse vache',
+  'gros tas',
+
+  // Insultes discriminatoires courantes
+  'mongol',
+  'mongole',
+  'trisomique'
+];
 
 
 // ============================================================
@@ -89,6 +154,11 @@ let lastAnnouncedStreamId = null;
 
 let twitchUserId = null;
 
+
+// ============================================================
+// TWITCH EVENTSUB
+// ============================================================
+
 let twitchEventSubSocket = null;
 
 let twitchEventSubSessionId = null;
@@ -98,6 +168,19 @@ let twitchEventSubConnecting = false;
 let twitchReconnectTimer = null;
 
 let twitchReconnectAttempt = 0;
+
+
+// ============================================================
+// TWITCH CHAT
+// ============================================================
+
+let twitchChatSocket = null;
+
+let twitchChatConnecting = false;
+
+let twitchChatReconnectTimer = null;
+
+let twitchChatReconnectAttempt = 0;
 
 
 // ============================================================
@@ -129,7 +212,7 @@ const client = new Client({
 
 
 // ============================================================
-// OUTILS GÉNÉRAUX
+// OUTILS
 // ============================================================
 
 function sleep(ms) {
@@ -157,7 +240,10 @@ function normalizeText(text) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[_\-.,!?;:/\\()[\]{}"'`]+/g, ' ')
+    .replace(
+      /[_\-.,!?;:/\\()[\]{}"'`]+/g,
+      ' '
+    )
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -198,9 +284,12 @@ function containsWord(content, word) {
 
 function detectModeration(content) {
   let general = false;
+
   let sensitive = false;
 
-  for (const word of GENERAL_INSULTS) {
+  for (
+    const word of GENERAL_INSULTS
+  ) {
     if (
       containsWord(
         content,
@@ -212,7 +301,9 @@ function detectModeration(content) {
     }
   }
 
-  for (const word of SENSITIVE_PATTERNS) {
+  for (
+    const word of SENSITIVE_PATTERNS
+  ) {
     if (
       containsWord(
         content,
@@ -232,7 +323,7 @@ function detectModeration(content) {
 
 
 // ============================================================
-// TRACKING DÉTECTIONS
+// TRACKING
 // ============================================================
 
 function registerDetection(
@@ -243,7 +334,9 @@ function registerDetection(
     Date.now();
 
   let data =
-    detectionTracker.get(userId);
+    detectionTracker.get(
+      userId
+    );
 
   if (!data) {
     data = {
@@ -266,11 +359,15 @@ function registerDetection(
         DETECTION_WINDOW
     );
 
-  if (type === 'general') {
+  if (
+    type === 'general'
+  ) {
     data.general.push(now);
   }
 
-  if (type === 'sensitive') {
+  if (
+    type === 'sensitive'
+  ) {
     data.sensitive.push(now);
   }
 
@@ -389,12 +486,12 @@ async function refreshTwitchToken() {
       process.env.TWITCH_REFRESH_TOKEN =
         data.refresh_token;
 
-      console.log(
-        '🔄 Nouveau Refresh Token Twitch reçu.'
+      console.warn(
+        '⚠️ Nouveau Refresh Token Twitch reçu.'
       );
 
       console.warn(
-        '⚠️ IMPORTANT : sauvegarde le nouveau TWITCH_REFRESH_TOKEN dans Render.'
+        '⚠️ Pense à le sauvegarder dans Render.'
       );
     }
 
@@ -684,7 +781,7 @@ async function sendTwitchLiveAnnouncement(
 
 
 // ============================================================
-// TWITCH EVENTSUB — CRÉER SUBSCRIPTION
+// TWITCH EVENTSUB — SUBSCRIPTION
 // ============================================================
 
 async function createStreamOnlineSubscription(
@@ -807,7 +904,7 @@ function scheduleTwitchReconnect() {
     );
 
   console.warn(
-    `⏳ Reconnexion Twitch prévue dans ${Math.round(delay / 1000)}s.`
+    `⏳ Reconnexion Twitch EventSub dans ${Math.round(delay / 1000)}s.`
   );
 
   twitchReconnectTimer =
@@ -822,7 +919,7 @@ function scheduleTwitchReconnect() {
 
         if (!twitchUserId) {
           console.error(
-            '❌ Impossible de reconnecter Twitch : userId absent.'
+            '❌ User ID Twitch absent.'
           );
 
           return;
@@ -837,47 +934,9 @@ function scheduleTwitchReconnect() {
 }
 
 
-// ============================================================
-// TWITCH EVENTSUB — FERMER SOCKET
-// ============================================================
-
-function closeTwitchSocket(
-  reason = 'normal'
-) {
-  const socket =
-    twitchEventSubSocket;
-
-  if (!socket) {
-    return;
-  }
-
-  console.log(
-    `🔌 Fermeture EventSub Twitch : ${reason}`
-  );
-
-  try {
-    socket.removeAllListeners(
-      'message'
-    );
-  } catch {}
-
-  try {
-    socket.close();
-  } catch {}
-
-  if (
-    twitchEventSubSocket ===
-    socket
-  ) {
-    twitchEventSubSocket =
-      null;
-  }
-
-  twitchEventSubSessionId =
-    null;
-
-  twitchEventSubConnecting =
-    false;
+function twitchEventSubReconnectAttemptReset() {
+  twitchReconnectAttempt =
+    0;
 }
 
 
@@ -895,10 +954,6 @@ async function connectTwitchEventSub(
   }
 
   if (!userId) {
-    console.error(
-      '❌ Twitch userId absent.'
-    );
-
     return null;
   }
 
@@ -911,10 +966,6 @@ async function connectTwitchEventSub(
         WebSocket.CONNECTING
     )
   ) {
-    console.log(
-      'ℹ️ Connexion Twitch EventSub déjà active.'
-    );
-
     return twitchEventSubSocket;
   }
 
@@ -924,7 +975,7 @@ async function connectTwitchEventSub(
     true;
 
   console.log(
-    '🔌 Connexion à Twitch EventSub...'
+    '🔌 Connexion Twitch EventSub...'
   );
 
   const ws =
@@ -942,7 +993,7 @@ async function connectTwitchEventSub(
         false;
 
       console.log(
-        '✅ Connexion Twitch EventSub ouverte.'
+        '✅ Twitch EventSub connecté.'
       );
     }
   );
@@ -963,15 +1014,6 @@ async function connectTwitchEventSub(
         const messageType =
           metadata.message_type;
 
-        console.log(
-          'EventSub message :',
-          messageType
-        );
-
-        // ------------------------------------------------------
-        // WELCOME
-        // ------------------------------------------------------
-
         if (
           messageType ===
           'session_welcome'
@@ -981,10 +1023,6 @@ async function connectTwitchEventSub(
             message.payload.session;
 
           if (!session) {
-            console.error(
-              '❌ Session Twitch invalide.'
-            );
-
             return;
           }
 
@@ -994,27 +1032,16 @@ async function connectTwitchEventSub(
           twitchEventSubReconnectAttemptReset();
 
           console.log(
-            'Session EventSub reçue.'
+            '✅ Session Twitch EventSub reçue.'
           );
 
-          const created =
-            await createStreamOnlineSubscription(
-              session.id,
-              userId
-            );
-
-          if (!created) {
-            console.error(
-              '❌ Impossible de créer la subscription EventSub.'
-            );
-          }
+          await createStreamOnlineSubscription(
+            session.id,
+            userId
+          );
 
           return;
         }
-
-        // ------------------------------------------------------
-        // KEEPALIVE
-        // ------------------------------------------------------
 
         if (
           messageType ===
@@ -1022,10 +1049,6 @@ async function connectTwitchEventSub(
         ) {
           return;
         }
-
-        // ------------------------------------------------------
-        // NOTIFICATION
-        // ------------------------------------------------------
 
         if (
           messageType ===
@@ -1050,31 +1073,15 @@ async function connectTwitchEventSub(
             const streamId =
               event.id;
 
-            console.log(
-              '🔴 Nouveau live détecté :',
-              streamId
-            );
-
             if (
               lastAnnouncedStreamId ===
               streamId
             ) {
-              console.log(
-                'ℹ️ Live déjà annoncé.'
-              );
-
               return;
             }
 
-            /*
-             * EventSub peut notifier avant
-             * que l'API streams retourne
-             * immédiatement les informations.
-             *
-             * On essaie plusieurs fois.
-             */
-
-            let stream = null;
+            let stream =
+              null;
 
             for (
               let attempt = 1;
@@ -1095,7 +1102,7 @@ async function connectTwitchEventSub(
 
             if (!stream) {
               console.error(
-                '❌ Informations du live introuvables après plusieurs tentatives.'
+                '❌ Informations du live introuvables.'
               );
 
               return;
@@ -1121,10 +1128,6 @@ async function connectTwitchEventSub(
           return;
         }
 
-        // ------------------------------------------------------
-        // RECONNECT
-        // ------------------------------------------------------
-
         if (
           messageType ===
           'session_reconnect'
@@ -1136,49 +1139,23 @@ async function connectTwitchEventSub(
               .reconnect_url;
 
           if (!reconnectUrl) {
-            console.error(
-              '❌ Twitch a demandé une reconnexion sans URL.'
-            );
-
             return;
           }
 
-          console.log(
-            '🔄 Twitch demande une reconnexion EventSub.'
-          );
-
-          /*
-           * Important :
-           *
-           * On ouvre la nouvelle connexion
-           * avec l'URL fournie par Twitch.
-           *
-           * On ne détruit pas immédiatement
-           * l'ancienne socket avant d'avoir
-           * donné la possibilité à la nouvelle
-           * de récupérer la session.
-           */
-
           setTimeout(
             async () => {
-              if (shuttingDown) {
-                return;
+              if (!shuttingDown) {
+                await connectTwitchEventSub(
+                  userId,
+                  reconnectUrl
+                );
               }
-
-              await connectTwitchEventSub(
-                userId,
-                reconnectUrl
-              );
             },
             500
           );
 
           return;
         }
-
-        // ------------------------------------------------------
-        // REVOCATION
-        // ------------------------------------------------------
 
         if (
           messageType ===
@@ -1188,27 +1165,12 @@ async function connectTwitchEventSub(
             '🔴 Subscription Twitch révoquée.'
           );
 
-          const payload =
-            message.payload ||
-            {};
-
-          console.error(
-            'Subscription :',
-            payload.subscription || null
-          );
-
-          /*
-           * Une révocation signifie souvent
-           * que le token ou les permissions
-           * doivent être vérifiés.
-           */
-
           return;
         }
 
       } catch (error) {
         console.error(
-          '❌ Erreur message EventSub :',
+          '❌ Erreur EventSub :',
           error.message
         );
       }
@@ -1222,7 +1184,7 @@ async function connectTwitchEventSub(
         false;
 
       console.error(
-        '❌ Erreur WebSocket Twitch :',
+        '❌ WebSocket Twitch EventSub :',
         error.message
       );
     }
@@ -1246,7 +1208,7 @@ async function connectTwitchEventSub(
       }
 
       console.warn(
-        `🟠 Connexion Twitch EventSub fermée. Code=${code} Reason=${reason ? reason.toString() : 'aucune'}`
+        `🟠 Twitch EventSub fermé. Code=${code}`
       );
 
       if (!shuttingDown) {
@@ -1259,9 +1221,393 @@ async function connectTwitchEventSub(
 }
 
 
-function twitchEventSubReconnectAttemptReset() {
-  twitchReconnectAttempt =
-    0;
+// ============================================================
+// TWITCH CHAT — RECONNEXION
+// ============================================================
+
+function clearTwitchChatReconnectTimer() {
+  if (twitchChatReconnectTimer) {
+    clearTimeout(
+      twitchChatReconnectTimer
+    );
+
+    twitchChatReconnectTimer =
+      null;
+  }
+}
+
+
+function scheduleTwitchChatReconnect() {
+  if (shuttingDown) {
+    return;
+  }
+
+  if (twitchChatReconnectTimer) {
+    return;
+  }
+
+  twitchChatReconnectAttempt++;
+
+  const delay =
+    Math.min(
+      5000 *
+        Math.pow(
+          2,
+          twitchChatReconnectAttempt - 1
+        ),
+      60000
+    );
+
+  console.warn(
+    `⏳ Reconnexion Twitch Chat dans ${Math.round(delay / 1000)}s.`
+  );
+
+  twitchChatReconnectTimer =
+    setTimeout(
+      async () => {
+        twitchChatReconnectTimer =
+          null;
+
+        if (!shuttingDown) {
+          await connectTwitchChat();
+        }
+      },
+      delay
+    );
+}
+
+
+// ============================================================
+// TWITCH CHAT — ENVOI
+// ============================================================
+
+function sendTwitchChatMessage(
+  text
+) {
+  if (
+    !twitchChatSocket ||
+    twitchChatSocket.readyState !==
+      WebSocket.OPEN
+  ) {
+    console.warn(
+      '⚠️ Twitch Chat non connecté.'
+    );
+
+    return false;
+  }
+
+  const message =
+    String(text || '')
+      .replace(/\r/g, '')
+      .replace(/\n/g, ' ')
+      .trim();
+
+  if (!message) {
+    return false;
+  }
+
+  const channel =
+    `#${TWITCH_USERNAME.toLowerCase()}`;
+
+  twitchChatSocket.send(
+    `PRIVMSG ${channel} :${message}\r\n`
+  );
+
+  console.log(
+    `💬 Twitch → ${message}`
+  );
+
+  return true;
+}
+
+
+// ============================================================
+// TWITCH CHAT — COMMANDES
+// ============================================================
+
+function handleTwitchChatMessage(
+  line
+) {
+  const match =
+    line.match(
+      /^:([^!]+)!.* PRIVMSG #[^ ]+ :(.+)$/i
+    );
+
+  if (!match) {
+    return;
+  }
+
+  const username =
+    match[1];
+
+  const content =
+    match[2].trim();
+
+  if (
+    !content.startsWith('!')
+  ) {
+    return;
+  }
+
+  const parts =
+    content
+      .slice(1)
+      .trim()
+      .split(/\s+/);
+
+  const command =
+    String(
+      parts.shift() || ''
+    ).toLowerCase();
+
+  console.log(
+    `📩 Twitch : !${command} par ${username}`
+  );
+
+  // ----------------------------------------------------------
+  // !discord
+  // ----------------------------------------------------------
+
+  if (
+    command === 'discord'
+  ) {
+    if (!DISCORD_INVITE) {
+      console.error(
+        '❌ DISCORD_INVITE absent dans Render.'
+      );
+
+      sendTwitchChatMessage(
+        '❌ Le lien Discord n’est pas configuré pour le moment.'
+      );
+
+      return;
+    }
+
+    sendTwitchChatMessage(
+      `💫 Rejoins notre serveur Discord : ${DISCORD_INVITE}`
+    );
+
+    return;
+  }
+
+  // ----------------------------------------------------------
+  // !serveur
+  // ----------------------------------------------------------
+
+  if (
+    command === 'serveur'
+  ) {
+    if (!DISCORD_INVITE) {
+      sendTwitchChatMessage(
+        '❌ Le lien Discord n’est pas configuré pour le moment.'
+      );
+
+      return;
+    }
+
+    sendTwitchChatMessage(
+      `💫 Rejoins notre serveur Discord : ${DISCORD_INVITE}`
+    );
+
+    return;
+  }
+}
+
+
+// ============================================================
+// TWITCH CHAT — CONNEXION
+// ============================================================
+
+async function connectTwitchChat() {
+  if (shuttingDown) {
+    return null;
+  }
+
+  if (
+    twitchChatSocket &&
+    (
+      twitchChatSocket.readyState ===
+        WebSocket.OPEN ||
+      twitchChatSocket.readyState ===
+        WebSocket.CONNECTING
+    )
+  ) {
+    return twitchChatSocket;
+  }
+
+  const accessToken =
+    process.env.TWITCH_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    console.error(
+      '❌ TWITCH_ACCESS_TOKEN absent pour Twitch Chat.'
+    );
+
+    return null;
+  }
+
+  clearTwitchChatReconnectTimer();
+
+  twitchChatConnecting =
+    true;
+
+  console.log(
+    '💬 Connexion au chat Twitch...'
+  );
+
+  const ws =
+    new WebSocket(
+      'wss://irc-ws.chat.twitch.tv:443'
+    );
+
+  twitchChatSocket =
+    ws;
+
+  ws.on(
+    'open',
+    () => {
+      twitchChatConnecting =
+        false;
+
+      console.log(
+        '🟢 Connexion Twitch Chat ouverte.'
+      );
+
+      const oauthToken =
+        accessToken.startsWith('oauth:')
+          ? accessToken
+          : `oauth:${accessToken}`;
+
+      ws.send(
+        `PASS ${oauthToken}\r\n`
+      );
+
+      ws.send(
+        `NICK ${TWITCH_USERNAME.toLowerCase()}\r\n`
+      );
+
+      ws.send(
+        `JOIN #${TWITCH_USERNAME.toLowerCase()}\r\n`
+      );
+    }
+  );
+
+  ws.on(
+    'message',
+    rawMessage => {
+      try {
+        const data =
+          rawMessage.toString();
+
+        const lines =
+          data.split('\r\n');
+
+        for (
+          const line of lines
+        ) {
+          if (!line) {
+            continue;
+          }
+
+          // PING Twitch
+          if (
+            line.startsWith('PING')
+          ) {
+            ws.send(
+              'PONG :tmi.twitch.tv\r\n'
+            );
+
+            continue;
+          }
+
+          // Connexion réussie
+          if (
+            line.includes(' 001 ')
+          ) {
+            twitchChatReconnectAttempt =
+              0;
+
+            console.log(
+              '✅ Nexus est connecté au chat Twitch.'
+            );
+
+            continue;
+          }
+
+          // Erreur authentification
+          if (
+            line.includes(
+              'Login authentication failed'
+            )
+          ) {
+            console.error(
+              '❌ Authentification Twitch Chat refusée.'
+            );
+
+            console.error(
+              '⚠️ Vérifie le token Twitch et ses permissions chat:read/chat:edit.'
+            );
+
+            continue;
+          }
+
+          // Message chat
+          if (
+            line.includes(' PRIVMSG ')
+          ) {
+            handleTwitchChatMessage(
+              line
+            );
+          }
+        }
+
+      } catch (error) {
+        console.error(
+          '❌ Erreur lecture Twitch Chat :',
+          error.message
+        );
+      }
+    }
+  );
+
+  ws.on(
+    'error',
+    error => {
+      twitchChatConnecting =
+        false;
+
+      console.error(
+        '🔴 Erreur Twitch Chat :',
+        error.message
+      );
+    }
+  );
+
+  ws.on(
+    'close',
+    (code, reason) => {
+      twitchChatConnecting =
+        false;
+
+      if (
+        twitchChatSocket ===
+        ws
+      ) {
+        twitchChatSocket =
+          null;
+      }
+
+      console.warn(
+        `🟠 Twitch Chat fermé. Code=${code} Reason=${reason ? reason.toString() : 'aucune'}`
+      );
+
+      if (!shuttingDown) {
+        scheduleTwitchChatReconnect();
+      }
+    }
+  );
+
+  return ws;
 }
 
 
@@ -1306,19 +1652,7 @@ async function createSanctionRequest({
   detectedMessage = null
 }) {
   try {
-    if (!guild) {
-      console.error(
-        '❌ Guild absente.'
-      );
-
-      return null;
-    }
-
-    if (!targetUser) {
-      console.error(
-        '❌ Target user absent.'
-      );
-
+    if (!guild || !targetUser) {
       return null;
     }
 
@@ -1328,10 +1662,6 @@ async function createSanctionRequest({
       );
 
     if (!channel) {
-      console.error(
-        '❌ Salon sanctions introuvable.'
-      );
-
       return null;
     }
 
@@ -1352,20 +1682,16 @@ async function createSanctionRequest({
         targetUser.tag ||
         targetUser.username,
 
-      proposedSanction:
-        proposedSanction,
+      proposedSanction,
 
       finalSanction:
         proposedSanction,
 
-      reason:
-        reason,
+      reason,
 
-      source:
-        source,
+      source,
 
-      detectedMessage:
-        detectedMessage,
+      detectedMessage,
 
       yesVotes:
         new Set(),
@@ -1433,7 +1759,6 @@ async function createSanctionRequest({
     const buttons =
       new ActionRowBuilder()
         .addComponents(
-
           new ButtonBuilder()
             .setCustomId(
               `sanction_yes_${requestId}`
@@ -1496,8 +1821,8 @@ async function createSanctionRequest({
 
   } catch (error) {
     console.error(
-      '❌ Erreur création demande sanction :',
-      error
+      '❌ Erreur création sanction :',
+      error.message
     );
 
     return null;
@@ -1564,10 +1889,6 @@ async function handleSanctionVote(
   const voterId =
     interaction.user.id;
 
-  // ----------------------------------------------------------
-  // ADMIN
-  // ----------------------------------------------------------
-
   if (
     isAdmin(interaction)
   ) {
@@ -1593,10 +1914,6 @@ async function handleSanctionVote(
     return;
   }
 
-  // ----------------------------------------------------------
-  // DÉJÀ VOTÉ
-  // ----------------------------------------------------------
-
   if (
     request.yesVotes.has(
       voterId
@@ -1616,10 +1933,6 @@ async function handleSanctionVote(
     return;
   }
 
-  // ----------------------------------------------------------
-  // ENREGISTRER
-  // ----------------------------------------------------------
-
   if (vote === 'yes') {
     request.yesVotes.add(
       voterId
@@ -1629,10 +1942,6 @@ async function handleSanctionVote(
       voterId
     );
   }
-
-  // ----------------------------------------------------------
-  // 3 POUR
-  // ----------------------------------------------------------
 
   if (
     request.yesVotes.size >=
@@ -1720,7 +2029,6 @@ async function finalizeSanctionRequest(
     const disabledRow =
       new ActionRowBuilder()
         .addComponents(
-
           new ButtonBuilder()
             .setCustomId(
               `finished_yes_${request.id}`
@@ -1773,12 +2081,6 @@ async function finalizeSanctionRequest(
         disabledRow
       ]
     });
-
-    console.log(
-      approved
-        ? '🟢 Demande validée.'
-        : '🔴 Demande refusée.'
-    );
 
   } catch (error) {
     console.error(
@@ -1840,7 +2142,7 @@ async function handleModifySanction(
 
 
 // ============================================================
-// SANCTIONS — UPDATE VOTES
+// SANCTIONS — UPDATE
 // ============================================================
 
 async function updateSanctionMessage(
@@ -1878,7 +2180,7 @@ async function updateSanctionMessage(
       value:
         `🟢 Pour : **${request.yesVotes.size}**\n` +
         `🔴 Contre : **${request.noVotes.size}**\n\n` +
-        `Validation automatique à **3 votes Pour**.`
+        'Validation automatique à **3 votes Pour**.'
     };
 
     if (
@@ -1918,10 +2220,6 @@ client.on(
   'interactionCreate',
   async interaction => {
     try {
-
-      // --------------------------------------------------------
-      // SLASH COMMAND
-      // --------------------------------------------------------
 
       if (
         interaction.isChatInputCommand()
@@ -2065,9 +2363,6 @@ client.on(
         return;
       }
 
-      // --------------------------------------------------------
-      // BOUTONS
-      // --------------------------------------------------------
 
       if (
         interaction.isButton()
@@ -2125,8 +2420,6 @@ client.on(
             interaction,
             requestId
           );
-
-          return;
         }
       }
 
@@ -2216,10 +2509,6 @@ client.on(
       `sensibles=${sensitiveCount}`
     );
 
-    // --------------------------------------------------------
-    // CONTENU SENSIBLE
-    // --------------------------------------------------------
-
     if (
       detected.sensitive
     ) {
@@ -2234,7 +2523,7 @@ client.on(
           'À déterminer',
 
         reason:
-          'Détection automatique d’un contenu potentiellement problématique. Contexte à examiner.',
+          'Détection automatique d’un contenu potentiellement discriminatoire. Contexte à examiner.',
 
         source:
           'automatic',
@@ -2245,10 +2534,6 @@ client.on(
 
       return;
     }
-
-    // --------------------------------------------------------
-    // INSULTES GÉNÉRALES
-    // --------------------------------------------------------
 
     if (
       generalCount >=
@@ -2393,19 +2678,10 @@ const sanctionCommand =
 // ============================================================
 
 async function registerCommands() {
-  if (!DISCORD_TOKEN) {
-    console.error(
-      '❌ DISCORD_TOKEN absent.'
-    );
-
-    return false;
-  }
-
-  if (!DISCORD_CLIENT_ID) {
-    console.error(
-      '❌ DISCORD_CLIENT_ID absent.'
-    );
-
+  if (
+    !DISCORD_TOKEN ||
+    !DISCORD_CLIENT_ID
+  ) {
     return false;
   }
 
@@ -2437,7 +2713,7 @@ async function registerCommands() {
 
   } catch (error) {
     console.error(
-      '❌ Erreur enregistrement commandes :',
+      '❌ Erreur commandes :',
       error.message
     );
 
@@ -2457,7 +2733,7 @@ client.once(
       Date.now();
 
     console.log(
-      '🟢 Nexus est connecté en tant que ' +
+      '🟢 Nexus connecté en tant que ' +
       client.user.tag
     );
 
@@ -2546,14 +2822,6 @@ client.on(
         ? event.code
         : 'inconnu'
     );
-
-    console.error(
-      'Raison :',
-      event &&
-      event.reason
-        ? event.reason.toString()
-        : 'aucune'
-    );
   }
 );
 
@@ -2621,55 +2889,31 @@ setInterval(
       const ping =
         client.ws.ping;
 
-      const uptime =
-        Math.floor(
-          process.uptime()
-        );
-
       console.log(
-        `[WATCHDOG] Discord=${statusName} | ` +
+        `[WATCHDOG] ` +
+        `Discord=${statusName} | ` +
         `user=${client.user ? client.user.tag : 'non connecté'} | ` +
         `ping=${ping}ms | ` +
-        `uptime=${uptime}s | ` +
-        `Twitch=${twitchEventSubSocket && twitchEventSubSocket.readyState === WebSocket.OPEN ? 'connected' : 'disconnected'}`
-      );
-
-      if (
-        status ===
-        Status.Ready
-      ) {
-        return;
-      }
-
-      if (
-        status ===
-        Status.Connecting
-      ) {
-        console.warn(
-          '🟡 Discord est en connexion.'
-        );
-
-        return;
-      }
-
-      if (
-        status ===
-        Status.Reconnecting
-      ) {
-        console.warn(
-          '🟠 Discord est en reconnexion.'
-        );
-
-        return;
-      }
-
-      console.error(
-        `🔴 Discord état anormal : ${statusName}`
+        `uptime=${Math.floor(process.uptime())}s | ` +
+        `TwitchEventSub=${
+          twitchEventSubSocket &&
+          twitchEventSubSocket.readyState ===
+            WebSocket.OPEN
+            ? 'connected'
+            : 'disconnected'
+        } | ` +
+        `TwitchChat=${
+          twitchChatSocket &&
+          twitchChatSocket.readyState ===
+            WebSocket.OPEN
+            ? 'connected'
+            : 'disconnected'
+        }`
       );
 
     } catch (error) {
       console.error(
-        '❌ Watchdog Discord :',
+        '❌ Watchdog :',
         error.message
       );
     }
@@ -2697,8 +2941,7 @@ const server =
         // ------------------------------------------------------
 
         if (
-          url.pathname ===
-          '/'
+          url.pathname === '/'
         ) {
           const online =
             client.ws.status ===
@@ -2739,15 +2982,17 @@ const server =
             discordStatus ===
             Status.Ready;
 
-          const statusName =
-            getDiscordStatusName(
-              discordStatus
-            );
-
-          const twitchConnected =
+          const twitchEventSubConnected =
             Boolean(
               twitchEventSubSocket &&
               twitchEventSubSocket.readyState ===
+                WebSocket.OPEN
+            );
+
+          const twitchChatConnected =
+            Boolean(
+              twitchChatSocket &&
+              twitchChatSocket.readyState ===
                 WebSocket.OPEN
             );
 
@@ -2770,7 +3015,9 @@ const server =
                   : 'degraded',
 
               discord:
-                statusName,
+                getDiscordStatusName(
+                  discordStatus
+                ),
 
               discordReady,
 
@@ -2793,8 +3040,11 @@ const server =
                   : null,
 
               twitch: {
-                connected:
-                  twitchConnected,
+                eventSubConnected:
+                  twitchEventSubConnected,
+
+                chatConnected:
+                  twitchChatConnected,
 
                 sessionId:
                   twitchEventSubSessionId,
@@ -2814,7 +3064,7 @@ const server =
         }
 
         // ------------------------------------------------------
-        // TWITCH OAUTH CALLBACK
+        // TWITCH CALLBACK
         // ------------------------------------------------------
 
         if (
@@ -2907,11 +3157,7 @@ const server =
               );
 
               res.writeHead(
-                500,
-                {
-                  'Content-Type':
-                    'text/html; charset=utf-8'
-                }
+                500
               );
 
               res.end(
@@ -2935,7 +3181,7 @@ const server =
                 data.refresh_token;
 
               console.warn(
-                '⚠️ Nouveau Refresh Token Twitch reçu : sauvegarde-le dans Render.'
+                '⚠️ Nouveau Refresh Token Twitch reçu.'
               );
             }
 
@@ -2964,11 +3210,7 @@ const server =
             );
 
             res.writeHead(
-              500,
-              {
-                'Content-Type':
-                  'text/html; charset=utf-8'
-              }
+              500
             );
 
             res.end(
@@ -2997,8 +3239,8 @@ const server =
 
       } catch (error) {
         console.error(
-          '❌ Erreur serveur HTTP :',
-          error
+          '❌ Erreur HTTP :',
+          error.message
         );
 
         if (!res.headersSent) {
@@ -3040,7 +3282,7 @@ server.listen(
 
 async function initializeTwitch() {
   console.log(
-    'Initialisation Twitch...'
+    '📡 Initialisation Twitch...'
   );
 
   const tokenReady =
@@ -3074,14 +3316,18 @@ async function initializeTwitch() {
     `ID Twitch de ${TWITCH_USERNAME}: ${userId}`
   );
 
+  // EventSub
   await connectTwitchEventSub(
     userId
   );
+
+  // Chat Twitch
+  await connectTwitchChat();
 }
 
 
 // ============================================================
-// DIAGNOSTIC DÉMARRAGE
+// DIAGNOSTIC
 // ============================================================
 
 console.log(
@@ -3131,6 +3377,11 @@ console.log(
 );
 
 console.log(
+  'Discord Invite présent :',
+  Boolean(DISCORD_INVITE)
+);
+
+console.log(
   '============================================'
 );
 
@@ -3164,7 +3415,7 @@ async function initializeDiscord() {
   } catch (error) {
     console.error(
       '❌ Erreur login Discord :',
-      error
+      error.message
     );
   }
 }
@@ -3177,20 +3428,12 @@ async function initializeDiscord() {
 (async () => {
   await initializeDiscord();
 
-  /*
-   * On initialise Twitch indépendamment
-   * de Discord.
-   *
-   * Une panne Twitch ne doit pas empêcher
-   * le bot Discord de fonctionner.
-   */
-
   await initializeTwitch();
 })();
 
 
 // ============================================================
-// HEARTBEAT PROCESSUS
+// HEARTBEAT
 // ============================================================
 
 setInterval(
@@ -3216,10 +3459,6 @@ setInterval(
     const now =
       Date.now();
 
-    // --------------------------------------------------------
-    // Détections
-    // --------------------------------------------------------
-
     for (
       const [
         userId,
@@ -3242,20 +3481,14 @@ setInterval(
         );
 
       if (
-        data.general.length ===
-          0 &&
-        data.sensitive.length ===
-          0
+        data.general.length === 0 &&
+        data.sensitive.length === 0
       ) {
         detectionTracker.delete(
           userId
         );
       }
     }
-
-    // --------------------------------------------------------
-    // Cooldowns
-    // --------------------------------------------------------
 
     for (
       const [
@@ -3274,10 +3507,6 @@ setInterval(
       }
     }
 
-    // --------------------------------------------------------
-    // Demandes
-    // --------------------------------------------------------
-
     if (
       sanctionRequests.size >
       500
@@ -3288,20 +3517,13 @@ setInterval(
         );
 
       requests
-        .slice(
-          0,
-          100
-        )
+        .slice(0, 100)
         .forEach(
           ([id]) =>
             sanctionRequests.delete(
               id
             )
         );
-
-      console.log(
-        '🧹 Nettoyage des anciennes demandes de sanction.'
-      );
     }
 
   },
@@ -3331,16 +3553,6 @@ process.on(
       '🔴 UNCAUGHT EXCEPTION :',
       error
     );
-
-    /*
-     * IMPORTANT :
-     *
-     * On ne fait PAS process.exit()
-     * automatiquement ici.
-     *
-     * Cela permet de conserver les logs
-     * et d'éviter un redémarrage sauvage.
-     */
   }
 );
 
@@ -3355,10 +3567,6 @@ async function gracefulShutdown(
   if (
     shutdownStarted
   ) {
-    console.warn(
-      `⚠️ ${signal} reçu alors que l'arrêt est déjà en cours.`
-    );
-
     return;
   }
 
@@ -3372,15 +3580,8 @@ async function gracefulShutdown(
     `🟠 ${signal} reçu. Arrêt propre de Nexus.`
   );
 
-  // ----------------------------------------------------------
-  // TWITCH TIMER
-  // ----------------------------------------------------------
-
+  // Twitch EventSub
   clearTwitchReconnectTimer();
-
-  // ----------------------------------------------------------
-  // TWITCH SOCKET
-  // ----------------------------------------------------------
 
   if (
     twitchEventSubSocket
@@ -3396,52 +3597,41 @@ async function gracefulShutdown(
   twitchEventSubSocket =
     null;
 
-  twitchEventSubSessionId =
-    null;
+  // Twitch Chat
+  clearTwitchChatReconnectTimer();
 
-  twitchEventSubConnecting =
-    false;
-
-  // ----------------------------------------------------------
-  // DISCORD
-  // ----------------------------------------------------------
-
-  try {
-    if (
-      client &&
-      client.ws
-    ) {
-      console.log(
-        '🔌 Fermeture Discord...'
+  if (
+    twitchChatSocket
+  ) {
+    try {
+      twitchChatSocket.close(
+        1000,
+        'Nexus shutdown'
       );
-
-      client.destroy();
-    }
-  } catch (error) {
-    console.error(
-      '❌ Erreur fermeture Discord :',
-      error.message
-    );
+    } catch {}
   }
 
-  // ----------------------------------------------------------
-  // HTTP
-  // ----------------------------------------------------------
+  twitchChatSocket =
+    null;
 
+  // Discord
+  try {
+    client.destroy();
+  } catch {}
+
+  // HTTP
   try {
     await new Promise(
       resolve => {
-        let resolved =
-          false;
+        let finished = false;
 
         const finish =
           () => {
-            if (resolved) {
+            if (finished) {
               return;
             }
 
-            resolved =
-              true;
+            finished = true;
 
             resolve();
           };
@@ -3465,13 +3655,6 @@ async function gracefulShutdown(
   console.log(
     '🛑 Nexus arrêté proprement.'
   );
-
-  /*
-   * Render attend que le processus
-   * termine après SIGTERM.
-   *
-   * On quitte volontairement ici.
-   */
 
   process.exit(0);
 }
